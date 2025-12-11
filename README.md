@@ -1,89 +1,92 @@
 # NoSnooze 📵
 
-**"Ertelemek Yok. Uyanmak Zorundasın."**
+**"No Snooze Allowed. You Have To Get Up."**
 
-NoSnooze, uyanmakta zorluk çekenler için geliştirilmiş, **kullanıcı önceden tanımladığı barkodu okutana kadar susmayan** agresif bir alarm uygulamasıdır. Standart alarmların aksine, NoSnooze sizi yataktan kalkmaya ve fiziksel bir eylemde bulunmaya zorlar.
+NoSnooze is an aggressive alarm application developed for people who have difficulty waking up. It **will not stop ringing until the user scans a pre-defined barcode**. Unlike standard alarms, NoSnooze forces you to get out of bed and perform a physical action.
 
 ![App Screenshot](assets/screenshot_placeholder.png) 
-*(Buraya uygulamanın ana ekranının ve tarama ekranının ekran görüntüsünü ekleyebilirsin)*
+*(You can add screenshots of the app's home screen and scanning screen here)*
 
-## 🚀 Özellikler
+## 🚀 Key Features
 
-* **Barkod ile Susturma:** Alarmı durdurmanın TEK yolu, önceden kaydettiğiniz diş macunu, kitap veya şampuan barkodunu kameraya okutmaktır.
-* **Hata Toleranslı Kamera Yönetimi:** Titreşim ve kamera donanımı arasındaki çakışmaları önleyen özel "Restart Sequence" mimarisi.
-* **Akıllı Pil Yönetimi:** Xiaomi/MIUI gibi agresif pil optimizasyonu yapan cihazlarda bile kararlı çalışma.
-* **Çoklu Dil Desteği:** Türkçe ve İngilizce tam destek.
-* **Karanlık Mod:** Göz yormayan, OLED dostu tam siyah arayüz.
-* **Flaş Desteği:** Karanlık odada barkodu rahat okutabilmek için entegre fener kontrolü.
+* **Barcode Dismissal:** The ONLY way to stop the alarm is by scanning a saved barcode of an item (toothpaste, book, or shampoo) with the camera.
+* **Fault-Tolerant Camera Management:** A custom "Restart Sequence" architecture prevents conflicts between the vibrator motor and the camera hardware.
+* **Smart Battery Management:** Stable operation even on devices with aggressive battery optimization, such as Xiaomi/MIUI.
+* **Multi-Language Support:** Full support for Turkish (TR) and English (EN).
+* **Dark Mode:** A full black, OLED-friendly interface that is easy on the eyes.
+* **Flashlight Control:** Integrated torch control for scanning barcodes easily in dark rooms.
 
-## 🛠️ Teknik Mimari ve Kullanılan Teknolojiler
+## 🛠️ Technical Architecture and Stack
 
-Bu proje **Flutter** ile geliştirilmiştir ve donanım kısıtlamalarına karşı özel mühendislik çözümleri içerir.
+This project is built with **Flutter** and incorporates specific engineering solutions against hardware limitations.
 
 * **SDK:** Flutter (Dart 3.x)
-* **Alarm Engine:** `alarm: ^5.0.0` (Android AlarmManager API)
-* **Scanner:** `mobile_scanner: ^5.0.0` (ML Kit tabanlı)
+* **Alarm Engine:** `alarm: ^5.0.0` (Utilizes the Android AlarmManager API)
+* **Scanner:** `mobile_scanner: ^5.0.0` (ML Kit based)
 * **Storage:** `shared_preferences`
 * **Permissions:** `permission_handler`
 
-### 🔥 Kritik Sorunlar ve Çözümleri (Engineering Challenges)
+### 🔥 Critical Engineering Challenges and Solutions
 
-Proje geliştirilirken özellikle **Redmi Note 9S** ve benzeri orta segment cihazlarda yaşanan donanım darboğazları (Resource Busy) için özel algoritmalar geliştirilmiştir:
+Specialized algorithms were developed to overcome the hardware bottlenecks (Resource Busy) experienced particularly on **Redmi Note 9S** and similar mid-range devices:
 
-#### 1. "Camera Resource Busy" / BufferQueue Abandoned Hatası
-Alarm çalarken (vibrasyon motoru aktifken) kamera açılmaya çalışıldığında donanım kilitleniyordu.
-* **Çözüm:** `RingScreen` içinde "Restart Sequence" uygulandı. Kullanıcı "Titreşimi Kes" dediğinde:
-    1.  Kamera sayfası kapatılır (`Navigator.pop`).
-    2.  Alarm tamamen durdurulur.
-    3.  **2.5 Saniye** donanım soğuma süresi beklenir (`Future.delayed`).
-    4.  Alarm sessiz modda tekrar başlatılır.
-    5.  Kamera güvenli bir şekilde yeniden açılır.
+#### 1. "Camera Resource Busy" / BufferQueue Abandoned Error
+The hardware would freeze when the camera tried to open while the alarm was ringing (vibration motor active).
 
-#### 2. İşlemci Şişmesi (Lag)
-Kameranın saniyede 60 kare tarama yapması UI thread'i kilitliyordu.
-* **Çözüm:** `DetectionSpeed.noDuplicates` ve `isScanCompleted` flag'leri ile tarama hızı optimize edildi ve işlemci yükü %60 azaltıldı.
+* **Solution:** A "Restart Sequence" is executed within `RingScreen`. When the user taps "Cut Vibration":
+    1.  The camera page is closed (`Navigator.pop`).
+    2.  The alarm is completely stopped.
+    3.  A **2.5 SECOND** hardware cool-down period is enforced (`Future.delayed`).
+    4.  The alarm is restarted silently.
+    5.  The camera is safely reopened after the delay.
 
-#### 3. "Machine Gun" Etkisi (Çoklu Tetikleme)
-Tek bir barkodun milisaniyeler içinde 10 kez okunup alarmı kapatıp-açma döngüsüne sokması.
-* **Çözüm:** İlk başarılı okumadan sonra sistem `PopScope` ve boolean kilitlerle (`isLocked`) kitlenir.
+#### 2. CPU Overload (Lag)
+The camera continuously scanning at high frame rates would lock up the UI thread.
 
-## ⚙️ Kurulum ve Çalıştırma
+* **Solution:** Scanning speed was optimized using `DetectionSpeed.noDuplicates` within `MobileScannerController` and stabilized with an `isScanCompleted` flag, reducing CPU load by approximately 60%.
 
-Projeyi yerel ortamınızda çalıştırmak için:
+#### 3. "Machine Gun" Effect (Multi-Triggering)
+A single barcode read would trigger the stop function 10 times within milliseconds, causing instability.
 
-1.  Repoyu klonlayın:
+* **Solution:** The system is locked immediately after the first successful read using a `PopScope` and boolean lock (`isLocked` flag).
+
+## ⚙️ Setup and Running the Project
+
+To run the project in your local environment:
+
+1.  Clone the repository:
     ```bash
     git clone [https://github.com/kullaniciadi/NoSnooze.git](https://github.com/kullaniciadi/NoSnooze.git)
     ```
-2.  Bağımlılıkları yükleyin:
+2.  Install dependencies:
     ```bash
     flutter pub get
     ```
-3.  Uygulamayı çalıştırın (Fiziksel cihaz önerilir):
+3.  Run the application (A physical device is recommended for testing the alarm functionality):
     ```bash
     flutter run
     ```
 
-## 📱 Android Yapılandırması (Önemli)
+## 📱 Android Configuration (Crucial)
 
-Bu proje `AndroidManifest.xml` içerisinde şu kritik izinleri ve ayarları kullanır:
+This project utilizes critical permissions and settings within `AndroidManifest.xml`:
 
-* `SCHEDULE_EXACT_ALARM`: Zamanında tetikleme için.
-* `WAKE_LOCK` & `turnScreenOn`: Kilit ekranında alarmın arayüzle birlikte açılması için.
-* `showWhenLocked`: Telefon kilitliyken `RingScreen`'in görünmesi için.
+* `SCHEDULE_EXACT_ALARM`: For timely alarm triggering.
+* `WAKE_LOCK` & `turnScreenOn`: To ensure the alarm interface displays over the lock screen.
+* `showWhenLocked`: Allows the `RingScreen` to appear even when the phone is locked.
 
-## 🤝 Katkıda Bulunma
+## 🤝 Contributing
 
-1.  Forklayın
-2.  Feature branch oluşturun (`git checkout -b feature/YeniOzellik`)
-3.  Commit atın (`git commit -m 'Yeni özellik eklendi'`)
-4.  Pushlayın (`git push origin feature/YeniOzellik`)
-5.  Pull Request açın
+1.  Fork the repository.
+2.  Create a feature branch (`git checkout -b feature/NewFeature`).
+3.  Commit your changes (`git commit -m 'feat: Added new feature'`).
+4.  Push to the branch (`git push origin feature/NewFeature`).
+5.  Open a Pull Request.
 
-## 📝 Lisans
+## 📝 License
 
-Bu proje MIT lisansı ile lisanslanmıştır.
+This project is licensed under the MIT License.
 
 ---
-**Geliştirici:** Burak Çam  
-**Sürüm:** v1.0 (Stabil)
+**Developer:** Burak Çam
+**Version:** v1.0 (Stable)
