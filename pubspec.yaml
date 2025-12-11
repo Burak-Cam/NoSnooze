@@ -10,7 +10,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
   # icons
   cupertino_icons: ^1.0.8
 

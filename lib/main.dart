@@ -6,10 +6,16 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+// device_info_plus İPORTU KALDIRILDI
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Alarm.init();
+
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
 
   runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -26,7 +32,6 @@ Future<void> main() async {
   ));
 }
 
-// --- GLOBAL ALARM FONKSİYONU ---
 Future<void> scheduleAlarmFn(DateTime dateTime, bool isTest, bool vibrate, String lang) async {
   final alarmSettings = AlarmSettings(
     id: 42,
@@ -42,7 +47,7 @@ Future<void> scheduleAlarmFn(DateTime dateTime, bool isTest, bool vibrate, Strin
     notificationSettings: NotificationSettings(
       title: isTest ? 'TEST' : 'NoSnooze',
       body: AppStrings.get('notification_body', lang),
-      stopButton: null, 
+      stopButton: null,
       icon: 'notification_icon',
     ),
   );
@@ -60,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
   TimeOfDay selectedTime = TimeOfDay.now();
   bool isAlarmActive = false;
   String currentLang = 'tr';
-  
+
   StreamSubscription? alarmSubscription;
 
   @override
@@ -68,15 +73,21 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadPreferences();
     _checkPermissions();
-    _checkBatteryOptimization(); 
     _checkAlarmStatus();
     _startAlarmListener();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkBatteryOptimization());
+  }
+
+  @override
+  void dispose() {
+    alarmSubscription?.cancel();
+    super.dispose();
   }
 
   void _startAlarmListener() {
     alarmSubscription = Alarm.ringStream.stream.listen((alarmSettings) async {
       setState(() => isAlarmActive = false);
-      
+
       if (savedBarcodes.isNotEmpty) {
         final result = await Navigator.push(
           context,
@@ -96,42 +107,45 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // --- HIZLI YENİDEN BAŞLATMA ---
   Future<void> _handleRestartSequence() async {
-    // 1. Alarmı durdur (Vibrasyon sussun)
     await Alarm.stop(42);
-
-    // 2. Çok kısa bekle
     await Future.delayed(const Duration(milliseconds: 500));
-
-    // 3. Alarmı HEMEN başlat (Sessiz modda)
     await scheduleAlarmFn(DateTime.now().add(const Duration(milliseconds: 100)), false, false, currentLang);
   }
 
   Future<void> _checkBatteryOptimization() async {
-    if (await Permission.ignoreBatteryOptimizations.isDenied) {
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text(AppStrings.get('battery_title', currentLang)),
-            content: Text(AppStrings.get('battery_desc', currentLang)),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(AppStrings.get('btn_close', currentLang), style: const TextStyle(color: Colors.grey)),
-              ),
-              TextButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  await openAppSettings();
-                },
-                child: const Text("OK", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        );
-      }
+    if (await Permission.ignoreBatteryOptimizations.isGranted) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    bool hasSeenWarning = prefs.getBool('battery_dialog_seen') ?? false;
+    if (hasSeenWarning) return;
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Text(AppStrings.get('battery_title', currentLang)),
+          content: Text(AppStrings.get('battery_desc', currentLang)),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await prefs.setBool('battery_dialog_seen', true);
+                Navigator.pop(context);
+              },
+              child: Text(AppStrings.get('btn_close', currentLang), style: const TextStyle(color: Colors.grey)),
+            ),
+            TextButton(
+              onPressed: () async {
+                await prefs.setBool('battery_dialog_seen', true);
+                Navigator.pop(context);
+                await openAppSettings();
+              },
+              child: const Text("OK", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
     }
   }
 
@@ -173,10 +187,10 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     final result = await Navigator.push(
-      context, 
+      context,
       MaterialPageRoute(builder: (context) => ScannerScreen(language: currentLang))
     );
-    
+
     if (result != null) {
       if (savedBarcodes.contains(result)) {
         if(mounted) _showSnack(AppStrings.get('item_exists', currentLang));
@@ -315,14 +329,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(fontSize: 90, fontWeight: FontWeight.bold, color: isAlarmActive ? Colors.green : Colors.white, letterSpacing: 5),
                   ),
                   Text(
-                    isAlarmActive ? AppStrings.get('status_active', currentLang) : AppStrings.get('status_inactive', currentLang), 
+                    isAlarmActive ? AppStrings.get('status_active', currentLang) : AppStrings.get('status_inactive', currentLang),
                     style: const TextStyle(color: Colors.grey)
                   ),
                 ],
               ),
             ),
           ),
-          
+
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Column(
@@ -369,7 +383,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 icon: Icon(isAlarmActive ? Icons.alarm_off : Icons.alarm_add, size: 30),
                 label: Text(
-                  isAlarmActive ? AppStrings.get('btn_cancel', currentLang) : AppStrings.get('btn_set', currentLang), 
+                  isAlarmActive ? AppStrings.get('btn_cancel', currentLang) : AppStrings.get('btn_set', currentLang),
                   style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)
                 ),
               ),
@@ -381,12 +395,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// --- RING SCREEN (CORTLAMA KORUMALI) ---
+// --- RING SCREEN (TEMİZ: DEVICE INFO YOK, SARI KUTU YOK) ---
 class RingScreen extends StatefulWidget {
   final List<String> targetBarcodes;
   final bool startWithoutVibration;
   final String language;
-  
+
   const RingScreen({super.key, required this.targetBarcodes, this.startWithoutVibration = false, required this.language});
 
   @override
@@ -394,33 +408,40 @@ class RingScreen extends StatefulWidget {
 }
 
 class _RingScreenState extends State<RingScreen> {
-  // Controller artık nullable, böylece belleği boşaltabiliriz
   MobileScannerController? controller;
   bool isVibrationStopped = false;
-  // Kamera hazır mı? (Çarkı döndürmek için)
-  bool isCameraReady = false; 
+  bool isCameraReady = false;
   late String randomFact;
+
+  // Acil Durum Butonu için Timer
+  bool _showEmergencyButton = false;
+  Timer? _emergencyTimer;
+
+  // XIAOMI FONKSİYONU SİLİNDİ
 
   @override
   void initState() {
     super.initState();
     isVibrationStopped = widget.startWithoutVibration;
     randomFact = AppStrings.getRandomFact(widget.language);
-    
+
+    // 60 saniye sonra acil butonu göster
+    _emergencyTimer = Timer(const Duration(seconds: 60), () {
+      if (mounted) {
+        setState(() => _showEmergencyButton = true);
+      }
+    });
+
     if (isVibrationStopped) {
-      // RESTART DURUMU: Ses çalar, kamera 2.5 sn sonra gelir
       _delayedCameraInit();
     } else {
-      // NORMAL DURUM: Kamera hemen açılır
       _initController();
       isCameraReady = true;
     }
   }
 
-  // --- KRİTİK: GECİKMELİ BAŞLATMA ---
   Future<void> _delayedCameraInit() async {
-    // Kamerayı açmadan önce 2.5 saniye bekle
-    await Future.delayed(const Duration(milliseconds: 2500)); 
+    await Future.delayed(const Duration(milliseconds: 2500));
     if (mounted) {
       setState(() {
         _initController();
@@ -437,36 +458,50 @@ class _RingScreenState extends State<RingScreen> {
     );
   }
 
-  // TİTREŞİMİ DURDURMA İSTEĞİ (SİNYAL GÖNDERME)
   void _requestRestart() {
-    // Kamerayı kapatıp ana ekrana sinyal gönder
     Navigator.pop(context, 'RESTART');
   }
 
-  // BAŞARILI TARAMA
+  // ACİL DURUM KAPATMA
+  void _handleEmergencyStop() {
+    setState(() => isLocked = true);
+    Alarm.stop(42);
+    HapticFeedback.lightImpact();
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("⚠️ ${AppStrings.get('alarm_cancelled', widget.language)}")),
+    );
+  }
+
+  // --- ZOMBİ ALARM KORUMASI ---
   bool isLocked = false;
-  void _onScanSuccess() {
-  if (isLocked) return; 
-  setState(() => isLocked = true);
+  Future<void> _onScanSuccess() async {
+    if (isLocked) return;
+    setState(() => isLocked = true);
 
-  Alarm.stop(42);
-  HapticFeedback.heavyImpact();
+    await Alarm.stop(42);
+    HapticFeedback.heavyImpact();
 
-  // Show SnackBar before popping
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text("${AppStrings.get('morning_msg', widget.language)} \n\n${randomFact}"),
-      // Extend duration because the fact is long
-      duration: const Duration(seconds: 8), 
-    ),
-  );
+    if(mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("${AppStrings.get('morning_msg', widget.language)} \n\n${randomFact}"),
+          duration: const Duration(seconds: 8),
+        ),
+      );
+    }
 
-  // Pop after SnackBar shown
-  Navigator.pop(context);
-}
+    // 2 saniye bekle
+    await Future.delayed(const Duration(seconds: 2));
+
+    if(mounted) {
+      Navigator.pop(context);
+    }
+  }
 
   @override
   void dispose() {
+    _emergencyTimer?.cancel();
     controller?.dispose();
     super.dispose();
   }
@@ -474,12 +509,11 @@ class _RingScreenState extends State<RingScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false, 
+      canPop: false,
       child: Scaffold(
         backgroundColor: Colors.red,
         body: Stack(
           children: [
-            // KAMERA: Sadece hazırsa ve controller varsa göster
             if (isCameraReady && controller != null)
               MobileScanner(
                 controller: controller!,
@@ -494,7 +528,6 @@ class _RingScreenState extends State<RingScreen> {
                 },
               )
             else
-              // KAMERA BEKLERKEN ÇIKAN EKRAN (Ses çalmaya devam eder)
               const Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -505,7 +538,7 @@ class _RingScreenState extends State<RingScreen> {
                   ],
                 ),
               ),
-            
+
             // ORTA YAZI
             Center(
               child: Column(
@@ -534,7 +567,6 @@ class _RingScreenState extends State<RingScreen> {
                 ),
               ),
 
-            // Flaş Butonu (Sadece kamera hazırsa göster)
             if (isCameraReady && controller != null)
               Positioned(
                 top: 50, right: 20,
@@ -550,6 +582,34 @@ class _RingScreenState extends State<RingScreen> {
                   },
                 ),
               ),
+
+            // --- ACİL DURUM BUTONU ---
+            if (_showEmergencyButton)
+              Positioned(
+                top: 50, left: 20,
+                child: GestureDetector(
+                  onTap: _handleEmergencyStop,
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.redAccent, width: 2)
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 20),
+                        const SizedBox(width: 5),
+                        Text(
+                          AppStrings.get('emergency_btn', widget.language),
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            // KİLİT UYARISI BURADAN SİLİNDİ
           ],
         ),
       ),
@@ -557,7 +617,6 @@ class _RingScreenState extends State<RingScreen> {
   }
 }
 
-// --- SCANNER SCREEN (ADD ITEM) ---
 class ScannerScreen extends StatefulWidget {
   final String language;
   const ScannerScreen({super.key, required this.language});
@@ -614,7 +673,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 }
 
-// --- APP STRINGS ---
 class AppStrings {
   static const Map<String, Map<String, String>> _localizedValues = {
     'notification_body': {'tr': 'Susmak için barkodu okut!', 'en': 'Scan barcode to stop alarm!'},
@@ -638,34 +696,44 @@ class AppStrings {
     'alarm_cancelled': {'tr': 'Alarm İptal Edildi 🔕', 'en': 'Alarm Cancelled 🔕'},
     'alarm_set': {'tr': 'Alarm kuruldu:', 'en': 'Alarm set for'},
     'battery_title': {'tr': '⚠️ Önemli Uyarı', 'en': '⚠️ Important'},
-    'battery_desc': {'tr': 'Alarmın sabah kesin çalması için ayarlardan "Kısıtlama Yok" seçeneğini seçmelisin.', 'en': 'To ensure alarm rings, please select "No Restrictions" in battery settings.'},
+    'battery_desc': {
+      'tr': 'Alarmın garanti çalması ve uygulamanın kapanmaması için açılan ekranda şunları yapmalısınız:\n\n'
+            '1. PİL/BATARYA: "Kısıtlama Yok" veya "Sınırsız" seçeneğini seçin.\n'
+            '2. BAŞLATMA: Varsa "Otomatik Başlatma" veya "Arka Planda Çalışma" iznini açın.',
+      
+      'en': 'To ensure the alarm rings reliably, please adjust these settings in the next screen:\n\n'
+            '1. BATTERY: Select "Unrestricted" or "No Restrictions".\n'
+            '2. LAUNCH: Enable "Autostart" or "Run in Background" if available.'
+    },
     'btn_close': {'tr': 'Kapat', 'en': 'Close'},
+    'emergency_btn': {'tr': 'ACİL DURUM KAPAT', 'en': 'EMERGENCY STOP'},
+    // lock_hint SİLİNDİ
   };
+  
   static const Map<String, List<String>> _sleepFacts = {
-        'tr': [
-            "Biliyor muydun? Ortalama bir uyku döngüsü yaklaşık 90 dakikadır. Bu döngüler arasında uyanırsan daha dinç hissedersin!",
-            "Uyku sırasında beynin gün içinde öğrendiklerini pekiştirir ve hafızaya kaydeder. Kaliteli uyku, öğrenme demektir.",
-            "Yetişkinlerin %40'ı günde 7 saatten az uyuyor. Daha iyi bir gün için 7-9 saati hedefle!",
-            "Uyku eksikliği, açlık hormonu grelini yükselterek iştahını artırır. Kilo kontrolü için uykuna dikkat et.",
-            "Uyanır uyanmaz yatağını toplamak, güne küçük bir başarı ile başlamanın en kolay yoludur.",
-        ],
-        'en': [
-            "Did you know? An average sleep cycle is about 90 minutes. Waking up between these cycles can make you feel more refreshed!",
-            "During sleep, your brain consolidates what you learned during the day. Quality sleep means better memory.",
-            "40% of adults sleep less than 7 hours a day. Aim for 7-9 hours for a better day!",
-            "Lack of sleep increases the hunger hormone ghrelin, boosting your appetite. Pay attention to your sleep for weight control.",
-            "Making your bed right after waking up is the easiest way to start your day with a small achievement.",
-        ],
-    };
+    'tr': [
+      "Biliyor muydun? Ortalama bir uyku döngüsü yaklaşık 90 dakikadır.",
+      "Uyku sırasında beynin gün içinde öğrendiklerini pekiştirir.",
+      "Yetişkinlerin %40'ı günde 7 saatten az uyuyor. Hedefin 7-9 saat olsun!",
+      "Uyku eksikliği iştahını artırabilir. Kilo kontrolü için uykuna dikkat et.",
+      "Uyanır uyanmaz yatağını toplamak, güne küçük bir başarı ile başlamanı sağlar.",
+    ],
+    'en': [
+      "Did you know? An average sleep cycle is about 90 minutes.",
+      "During sleep, your brain consolidates what you learned during the day.",
+      "40% of adults sleep less than 7 hours a day. Aim for 7-9 hours!",
+      "Lack of sleep increases hunger hormones. Watch your sleep for weight control.",
+      "Making your bed right after waking up is a great way to start the day.",
+    ],
+  };
 
   static String get(String key, String lang) {
     return _localizedValues[key]?[lang] ?? key;
   }
 
   static String getRandomFact(String lang) {
-        final facts = _sleepFacts[lang] ?? _sleepFacts['tr']!; // Dil yoksa TR kullan
-        final randomIndex = DateTime.now().millisecondsSinceEpoch % facts.length; // Basit rastgele seçim
-        return facts[randomIndex];
-    }
-    
+    final facts = _sleepFacts[lang] ?? _sleepFacts['tr']!; 
+    final randomIndex = DateTime.now().millisecondsSinceEpoch % facts.length; 
+    return facts[randomIndex];
+  }
 }
