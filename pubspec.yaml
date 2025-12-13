@@ -10,13 +10,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_localizations: # <-- YENİ EKLENEN
-    sdk: flutter         # <-- YENİ EKLENEN
+  flutter_localizations:
+    sdk: flutter
   alarm: ^5.1.0
+  file_picker: ^8.0.0  # <-- BURAYI DEĞİŞTİR (6.1.1 yerine 8.0.0 yap)
   mobile_scanner: ^5.2.3
   permission_handler: ^11.3.1
   shared_preferences: ^2.3.2
   cupertino_icons: ^1.0.8
+  audioplayers: ^6.0.0
 
 dev_dependencies:
   flutter_test:
@@ -25,7 +27,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-
-  # alarm sound asset
   assets:
-    - assets/alarm.mp3
+    - assets/sounds/  # <-- Bu satır klasördeki her şeyi içeri alır
