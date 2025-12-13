@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:alarm/alarm.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart'; 
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,59 +18,112 @@ Future<void> main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
-  runApp(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    title: 'NoSnooze',
-    theme: ThemeData.dark().copyWith(
-      scaffoldBackgroundColor: Colors.black,
-      primaryColor: Colors.red,
-      colorScheme: const ColorScheme.dark(
-        primary: Colors.red,
-        secondary: Colors.redAccent,
-      ),
-    ),
-    home: const HomeScreen(),
-  ));
+  runApp(const NoSnoozeApp());
 }
 
-Future<void> scheduleAlarmFn(DateTime dateTime, bool isTest, bool vibrate, String lang) async {
+class NoSnoozeApp extends StatefulWidget {
+  const NoSnoozeApp({super.key});
+
+  @override
+  State<NoSnoozeApp> createState() => _NoSnoozeAppState();
+}
+
+class _NoSnoozeAppState extends State<NoSnoozeApp> {
+  Locale _locale = const Locale('en'); 
+
+  void setLanguage(String langCode) {
+    setState(() {
+      _locale = Locale(langCode);
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedLanguage();
+  }
+
+  Future<void> _loadSavedLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? savedLang = prefs.getString('app_lang');
+    if (savedLang != null) {
+      setState(() {
+        _locale = Locale(savedLang);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'NoSnooze',
+      locale: _locale, 
+      supportedLocales: const [Locale('en'), Locale('tr')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.black,
+        primaryColor: Colors.red,
+        colorScheme: const ColorScheme.dark(
+          primary: Colors.red,
+          secondary: Colors.redAccent,
+          surface: Colors.black,
+        ),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
+          backgroundColor: Colors.red,
+          foregroundColor: Colors.white,
+        ),
+      ),
+      home: HomeScreen(onLanguageChanged: setLanguage),
+    );
+  }
+}
+
+// ALARM SCHEDULING (v5.1.5 Compatible)
+Future<void> scheduleAlarmFn(int id, DateTime dateTime, bool vibrate, String lang) async {
   final alarmSettings = AlarmSettings(
-    id: 42,
+    id: id,
     dateTime: dateTime,
     assetAudioPath: 'assets/alarm.mp3',
     loopAudio: true,
     vibrate: vibrate,
     volumeSettings: VolumeSettings.fade(
       volume: 1.0,
-      fadeDuration: const Duration(seconds: 2),
+      fadeDuration: const Duration(seconds: 3),
       volumeEnforced: true,
     ),
     notificationSettings: NotificationSettings(
-      title: isTest ? 'TEST' : 'NoSnooze',
+      title: 'NoSnooze',
       body: AppStrings.get('notification_body', lang),
       stopButton: null,
       icon: 'notification_icon',
     ),
+    warningNotificationOnKill: true, 
+    androidFullScreenIntent: true,
   );
   await Alarm.set(alarmSettings: alarmSettings);
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final Function(String) onLanguageChanged;
+
+  const HomeScreen({super.key, required this.onLanguageChanged});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  List<AlarmEntity> alarms = [];
   List<String> savedBarcodes = [];
-  TimeOfDay selectedTime = TimeOfDay.now();
-  bool isAlarmActive = false;
-  String currentLang = 'tr';
+  String get currentLang => Localizations.localeOf(context).languageCode;
   
-  // --- GAMIFICATION DEĞİŞKENLERİ ---
   int streakCount = 0;
+  int snoozeTokens = 0;
   bool cheatDetected = false; 
-
   StreamSubscription? alarmSubscription;
 
   @override
@@ -76,11 +131,10 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadPreferences();
     _checkPermissions();
-    _checkAlarmStatus();
     _startAlarmListener();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkBatteryOptimization();
-      _checkCheatStatus(); // Hile kontrolü
+      _checkCheatStatus(); 
     });
   }
 
@@ -90,19 +144,20 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // --- HİLE KONTROLÜ (SHERLOCK HOLMES) ---
   Future<void> _checkCheatStatus() async {
     final prefs = await SharedPreferences.getInstance();
-    // Eğer "is_ringing" true kalmışsa, kullanıcı alarm çalarken uygulamayı öldürmüştür.
     bool wasRinging = prefs.getBool('is_ringing') ?? false;
 
     if (wasRinging) {
-      // CEZA KESME VAKTİ
-      await prefs.setBool('is_ringing', false); // Bayrağı indir
-      await prefs.setInt('user_streak', 0); // SERİYİ SIFIRLA!
+      await prefs.setBool('is_ringing', false); 
+      await prefs.setInt('user_streak', 0); 
+      await prefs.setInt('snooze_tokens', 0);
       
+      if (!mounted) return;
+
       setState(() {
         streakCount = 0;
+        snoozeTokens = 0;
         cheatDetected = true;
       });
 
@@ -112,15 +167,15 @@ class _HomeScreenState extends State<HomeScreen> {
           barrierDismissible: false,
           builder: (context) => AlertDialog(
             backgroundColor: Colors.red[900],
-            title: const Text("🚨 HİLE TESPİT EDİLDİ! 🚨", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            content: Text(
-              AppStrings.get('cheat_msg', currentLang),
-              style: const TextStyle(color: Colors.white),
+            title: Text(
+              AppStrings.get('cheat_title', currentLang), 
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
             ),
+            content: Text(AppStrings.get('cheat_msg', currentLang), style: const TextStyle(color: Colors.white)),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("ÖZÜR DİLERİM", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                child: const Text("OK", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               )
             ],
           ),
@@ -130,12 +185,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _startAlarmListener() {
+    // ignore: deprecated_member_use
     alarmSubscription = Alarm.ringStream.stream.listen((alarmSettings) async {
-      // ALARM ÇALMAYA BAŞLADI: TUZAĞI KUR (Flag = True)
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('is_ringing', true);
 
-      setState(() => isAlarmActive = false);
+      final index = alarms.indexWhere((element) => element.id == alarmSettings.id);
+      if (index != -1) {
+        if (mounted) {
+          setState(() {
+            alarms[index].isActive = false;
+          });
+        }
+        _saveAlarms();
+      }
+
+      if (!mounted) return;
 
       if (savedBarcodes.isNotEmpty) {
         final result = await Navigator.push(
@@ -145,70 +210,57 @@ class _HomeScreenState extends State<HomeScreen> {
               targetBarcodes: savedBarcodes,
               startWithoutVibration: !alarmSettings.vibrate,
               language: currentLang,
+              alarmId: alarmSettings.id,
             ),
           ),
         );
 
+        if (!mounted) return;
+
         if (result == 'RESTART') {
-          _handleRestartSequence();
+           await Alarm.stop(alarmSettings.id);
+           await Future.delayed(const Duration(milliseconds: 500));
+           await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang);
         } else if (result == 'SUCCESS') {
-           // Başarılı dönüş, streak güncellenmiş olmalı
-           _loadPreferences(); // Ekrandaki streak'i güncelle
+           _loadPreferences(); 
         }
       }
     });
   }
 
-  Future<void> _handleRestartSequence() async {
-    await Alarm.stop(42);
-    await Future.delayed(const Duration(milliseconds: 500));
-    await scheduleAlarmFn(DateTime.now().add(const Duration(milliseconds: 100)), false, false, currentLang);
-  }
-
   Future<void> _checkBatteryOptimization() async {
     if (await Permission.ignoreBatteryOptimizations.isGranted) return;
-
     final prefs = await SharedPreferences.getInstance();
     bool hasSeenWarning = prefs.getBool('battery_dialog_seen') ?? false;
     if (hasSeenWarning) return;
 
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: Text(AppStrings.get('battery_title', currentLang)),
-          content: Text(AppStrings.get('battery_desc', currentLang)),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await prefs.setBool('battery_dialog_seen', true);
-                Navigator.pop(context);
-              },
-              child: Text(AppStrings.get('btn_close', currentLang), style: const TextStyle(color: Colors.grey)),
-            ),
-            TextButton(
-              onPressed: () async {
-                await prefs.setBool('battery_dialog_seen', true);
-                Navigator.pop(context);
-                await openAppSettings();
-              },
-              child: const Text("OK", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      );
-    }
-  }
+    if (!mounted) return;
 
-  Future<void> _checkAlarmStatus() async {
-    final alarm = await Alarm.getAlarm(42);
-    if (alarm != null) {
-      setState(() {
-        isAlarmActive = true;
-        selectedTime = TimeOfDay.fromDateTime(alarm.dateTime);
-      });
-    }
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(AppStrings.get('battery_title', currentLang)),
+        content: Text(AppStrings.get('battery_desc', currentLang)),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await prefs.setBool('battery_dialog_seen', true);
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: Text(AppStrings.get('btn_close', currentLang), style: const TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await prefs.setBool('battery_dialog_seen', true);
+              if (context.mounted) Navigator.pop(context);
+              await openAppSettings();
+            },
+            child: const Text("OK", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _checkPermissions() async {
@@ -219,19 +271,219 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       savedBarcodes = prefs.getStringList('target_barcodes') ?? [];
-      currentLang = prefs.getString('app_lang') ?? 'tr';
-      streakCount = prefs.getInt('user_streak') ?? 0; // Streak yükle
+      streakCount = prefs.getInt('user_streak') ?? 0;
+      snoozeTokens = prefs.getInt('snooze_tokens') ?? 0;
+      
+      final String? alarmsJson = prefs.getString('alarms_data');
+      if (alarmsJson != null) {
+        List<dynamic> decoded = jsonDecode(alarmsJson);
+        alarms = decoded.map((e) => AlarmEntity.fromJson(e)).toList();
+      }
     });
+  }
+
+  Future<void> _saveAlarms() async {
+    final prefs = await SharedPreferences.getInstance();
+    String encoded = jsonEncode(alarms.map((e) => e.toJson()).toList());
+    await prefs.setString('alarms_data', encoded);
   }
 
   Future<void> _toggleLanguage() async {
     final prefs = await SharedPreferences.getInstance();
+    String newLang = (currentLang == 'tr') ? 'en' : 'tr';
+    widget.onLanguageChanged(newLang);
+    await prefs.setString('app_lang', newLang);
+  }
+
+  Future<void> _testAlarm() async {
+    if (savedBarcodes.isEmpty) {
+      _showSnack(AppStrings.get('add_item_first', currentLang));
+      return;
+    }
+    final now = DateTime.now();
+    await scheduleAlarmFn(
+      now.millisecondsSinceEpoch % 10000, 
+      now.add(const Duration(seconds: 5)), 
+      true, 
+      currentLang
+    );
+    _showSnack(AppStrings.get('test_start', currentLang));
+  }
+
+  void _showStatInfo(String type) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: Row(
+          children: [
+            Icon(
+              type == 'streak' ? Icons.local_fire_department : Icons.timelapse,
+              color: type == 'streak' ? Colors.orange : Colors.cyanAccent,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              type == 'streak' ? AppStrings.get('streak_title', currentLang) : AppStrings.get('token_title', currentLang),
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+            ),
+          ],
+        ),
+        content: Text(
+          type == 'streak' ? AppStrings.get('streak_desc', currentLang) : AppStrings.get('token_desc', currentLang),
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Got it!", style: TextStyle(color: Colors.white)),
+          )
+        ],
+      ),
+    );
+  }
+
+  Future<void> _addAlarm() async {
+    if (savedBarcodes.isEmpty) {
+      _showSnack(AppStrings.get('add_item_first', currentLang));
+      return;
+    }
+
+    DateTime? selectedDateTime;
+    
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext builder) {
+        DateTime tempDateTime = DateTime.now().add(const Duration(minutes: 1));
+        return SizedBox(
+          height: 300,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        selectedDateTime = tempDateTime;
+                        Navigator.pop(context);
+                      },
+                      child: const Text("OK", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 18)),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: CupertinoTheme(
+                  data: const CupertinoThemeData(
+                    brightness: Brightness.dark,
+                    textTheme: CupertinoTextThemeData(
+                      dateTimePickerTextStyle: TextStyle(color: Colors.white, fontSize: 20),
+                    ),
+                  ),
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.dateAndTime,
+                    use24hFormat: true,
+                    minimumDate: DateTime.now(),
+                    initialDateTime: DateTime.now().add(const Duration(minutes: 5)),
+                    onDateTimeChanged: (DateTime newDateTime) {
+                      tempDateTime = newDateTime;
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selectedDateTime == null) return;
+
+    final dateTime = selectedDateTime!;
+    
+    final newAlarm = AlarmEntity(
+      id: DateTime.now().millisecondsSinceEpoch % 100000, 
+      time: TimeOfDay(hour: dateTime.hour, minute: dateTime.minute),
+      isActive: true, 
+    );
+
+    await scheduleAlarmFn(newAlarm.id, dateTime, true, currentLang);
+
     setState(() {
-      currentLang = (currentLang == 'tr') ? 'en' : 'tr';
+      alarms.add(newAlarm);
+      alarms.sort((a, b) => (a.time.hour * 60 + a.time.minute).compareTo(b.time.hour * 60 + b.time.minute));
     });
-    await prefs.setString('app_lang', currentLang);
+    _saveAlarms();
+    
+    if (mounted) _showRemainingTime(dateTime);
+  }
+
+  Future<void> _toggleAlarm(int index, bool value) async {
+    setState(() {
+      alarms[index].isActive = value;
+    });
+
+    if (value) {
+       if (savedBarcodes.isEmpty) {
+        _showSnack(AppStrings.get('add_item_first', currentLang));
+        setState(() => alarms[index].isActive = false);
+        return;
+      }
+      
+      final now = DateTime.now();
+      DateTime dateTime = DateTime(now.year, now.month, now.day, alarms[index].time.hour, alarms[index].time.minute);
+      if (dateTime.isBefore(now)) {
+        dateTime = dateTime.add(const Duration(days: 1));
+      }
+      
+      await scheduleAlarmFn(alarms[index].id, dateTime, true, currentLang);
+      
+      if (mounted) _showRemainingTime(dateTime);
+    } else {
+      await Alarm.stop(alarms[index].id);
+      if (mounted) _showSnack(AppStrings.get('alarm_cancelled', currentLang));
+    }
+    _saveAlarms();
+  }
+
+  Future<void> _deleteAlarm(int index) async {
+    await Alarm.stop(alarms[index].id);
+    setState(() {
+      alarms.removeAt(index);
+    });
+    _saveAlarms();
+  }
+
+  void _showRemainingTime(DateTime target) {
+    final now = DateTime.now();
+    final difference = target.difference(now);
+    final hours = difference.inHours;
+    final minutes = difference.inMinutes % 60;
+    
+    String msg = currentLang == 'tr' 
+      ? "Alarm $hours saat $minutes dakika sonra çalacak." 
+      : "Alarm set for $hours hours and $minutes minutes.";
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      )
+    );
   }
 
   Future<void> _scanAndAddBarcode() async {
@@ -244,14 +496,17 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (context) => ScannerScreen(language: currentLang))
     );
 
+    if (!mounted) return;
+
     if (result != null) {
       if (savedBarcodes.contains(result)) {
-        if(mounted) _showSnack(AppStrings.get('item_exists', currentLang));
+        _showSnack(AppStrings.get('item_exists', currentLang));
         return;
       }
       final prefs = await SharedPreferences.getInstance();
       setState(() => savedBarcodes.add(result));
       await prefs.setStringList('target_barcodes', savedBarcodes);
+      
       if (mounted) _showSnack(AppStrings.get('item_added', currentLang));
     }
   }
@@ -260,116 +515,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() => savedBarcodes.removeAt(index));
     await prefs.setStringList('target_barcodes', savedBarcodes);
-  }
-
-  void _pickTime() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (BuildContext builder) {
-        return SizedBox(
-          height: 300,
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 10),
-                width: 50, height: 5,
-                decoration: BoxDecoration(color: Colors.grey[700], borderRadius: BorderRadius.circular(10)),
-              ),
-              Expanded(
-                child: CupertinoTheme(
-                  data: const CupertinoThemeData(
-                    brightness: Brightness.dark,
-                    textTheme: CupertinoTextThemeData(
-                      dateTimePickerTextStyle: TextStyle(color: Colors.white, fontSize: 24),
-                    ),
-                  ),
-                  child: CupertinoDatePicker(
-                    mode: CupertinoDatePickerMode.time,
-                    use24hFormat: true,
-                    initialDateTime: DateTime(2024, 1, 1, selectedTime.hour, selectedTime.minute),
-                    onDateTimeChanged: (DateTime newDateTime) {
-                      setState(() {
-                        selectedTime = TimeOfDay.fromDateTime(newDateTime);
-                      });
-                    },
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                    child: const Text("OK", style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _testAlarm() async {
-    if (savedBarcodes.isEmpty) {
-      _showSnack(AppStrings.get('add_item_first', currentLang));
-      return;
-    }
-    scheduleAlarmFn(DateTime.now().add(const Duration(seconds: 5)), true, true, currentLang);
-    if (mounted) _showSnack(AppStrings.get('test_start', currentLang));
-  }
-
-  Future<void> _handleAlarmButton() async {
-    if (isAlarmActive) {
-      await Alarm.stop(42);
-      
-      // ALARM İPTAL EDİLDİĞİNDE TUZAĞI KALDIR
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('is_ringing', false);
-
-      setState(() {
-        isAlarmActive = false;
-        selectedTime = TimeOfDay.now();
-      });
-      if(mounted) _showSnack(AppStrings.get('alarm_cancelled', currentLang));
-    } else {
-      if (savedBarcodes.isEmpty) {
-        _showSnack(AppStrings.get('add_item_first', currentLang));
-        HapticFeedback.heavyImpact();
-        return;
-      }
-      final now = DateTime.now();
-      DateTime dateTime = DateTime(now.year, now.month, now.day, selectedTime.hour, selectedTime.minute);
-      if (dateTime.isBefore(now)) dateTime = dateTime.add(const Duration(days: 1));
-
-      await scheduleAlarmFn(dateTime, false, true, currentLang);
-      setState(() => isAlarmActive = true);
-
-      final difference = dateTime.difference(now);
-      final hours = difference.inHours;
-      final minutes = difference.inMinutes % 60;
-      String durationMsg = "";
-      if (currentLang == 'tr') {
-        durationMsg = "Alarm $hours saat $minutes dakika sonra çalacak.";
-      } else {
-        durationMsg = "Alarm set for $hours hours and $minutes minutes from now.";
-      }
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(durationMsg, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            duration: const Duration(seconds: 4),
-            backgroundColor: Colors.green,
-          )
-        );
-      }
-    }
   }
 
   void _showSnack(String msg) {
@@ -388,76 +533,85 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Text(currentLang.toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         ),
         actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 15),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.grey[900],
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: streakCount > 0 ? Colors.orange : Colors.grey)
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.local_fire_department, color: Colors.orange, size: 20),
-                const SizedBox(width: 5),
-                Text("$streakCount", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          )
-        ],
-      ),
-      body: Column(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
+          IconButton(
+            onPressed: _testAlarm, 
+            icon: const Icon(Icons.play_circle_filled, color: Colors.greenAccent),
+            tooltip: "Test Alarm (5s)",
+          ),
+          
           GestureDetector(
-            onTap: isAlarmActive ? null : _pickTime,
-            child: Opacity(
-              opacity: isAlarmActive ? 0.6 : 1.0,
-              child: Column(
+            onTap: () => _showStatInfo('streak'),
+            child: Container(
+              margin: const EdgeInsets.only(left: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.grey[900],
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: streakCount > 0 ? Colors.orange : Colors.grey)
+              ),
+              child: Row(
                 children: [
-                  Text(
-                    "${selectedTime.hour.toString().padLeft(2, '0')}:${selectedTime.minute.toString().padLeft(2, '0')}",
-                    style: TextStyle(fontSize: 90, fontWeight: FontWeight.bold, color: isAlarmActive ? Colors.green : Colors.white, letterSpacing: 5),
-                  ),
-                  Text(
-                    isAlarmActive ? AppStrings.get('status_active', currentLang) : AppStrings.get('status_inactive', currentLang),
-                    style: const TextStyle(color: Colors.grey)
-                  ),
+                  const Icon(Icons.local_fire_department, color: Colors.orange, size: 20),
+                  const SizedBox(width: 4),
+                  Text("$streakCount", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
           ),
-          
-          TextButton.icon(
-            onPressed: _testAlarm,
-            icon: const Icon(Icons.bolt, color: Colors.yellow),
-            label: const Text("TEST", style: TextStyle(color: Colors.yellow)),
-          ),
 
+          GestureDetector(
+            onTap: () => _showStatInfo('token'),
+            child: Container(
+              margin: const EdgeInsets.only(right: 15, left: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.grey[900],
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: snoozeTokens > 0 ? Colors.cyanAccent : Colors.grey)
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.timelapse, color: Colors.cyanAccent, size: 20),
+                  const SizedBox(width: 4),
+                  Text("$snoozeTokens", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addAlarm,
+        child: const Icon(Icons.add, size: 30),
+      ),
+      body: Column(
+        children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.all(16),
             child: Column(
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text("${AppStrings.get('saved_items', currentLang)} (${savedBarcodes.length}/3)", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text("${AppStrings.get('saved_items', currentLang)} (${savedBarcodes.length}/3)", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white70)),
                     if (savedBarcodes.length < 3)
-                      IconButton(onPressed: isAlarmActive ? null : _scanAndAddBarcode, icon: const Icon(Icons.add_circle, color: Colors.green, size: 30))
+                      IconButton(onPressed: _scanAndAddBarcode, icon: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 24))
                   ],
                 ),
-                const SizedBox(height: 10),
                 if (savedBarcodes.isEmpty)
-                  Text(AppStrings.get('list_empty', currentLang), style: const TextStyle(color: Colors.grey), textAlign: TextAlign.center)
+                   Padding(
+                     padding: const EdgeInsets.all(8.0),
+                     child: Text(AppStrings.get('list_empty', currentLang), style: const TextStyle(color: Colors.grey, fontSize: 12), textAlign: TextAlign.center),
+                   )
                 else
                   Wrap(
                     spacing: 8.0,
                     children: List.generate(savedBarcodes.length, (index) {
                       return Chip(
                         label: Text("${AppStrings.get('item', currentLang)} ${index + 1}"),
-                        avatar: const Icon(Icons.qr_code, size: 18),
-                        deleteIcon: isAlarmActive ? null : const Icon(Icons.close, size: 18, color: Colors.redAccent),
-                        onDeleted: isAlarmActive ? null : () => _removeBarcode(index),
+                        avatar: const Icon(Icons.qr_code, size: 14),
+                        deleteIcon: const Icon(Icons.close, size: 14, color: Colors.redAccent),
+                        onDeleted: () => _removeBarcode(index),
                         backgroundColor: Colors.grey[800],
                       );
                     }),
@@ -465,26 +619,73 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+          
+          const Divider(color: Colors.grey),
 
-          Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: SizedBox(
-              width: double.infinity,
-              height: 60,
-              child: ElevatedButton.icon(
-                onPressed: _handleAlarmButton,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isAlarmActive ? Colors.grey[800] : Colors.red,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          Expanded(
+            child: alarms.isEmpty 
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.alarm_off, size: 80, color: Colors.grey[800]),
+                      const SizedBox(height: 10),
+                      const Text("No Alarms Set", style: TextStyle(color: Colors.grey)),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: alarms.length,
+                  itemBuilder: (context, index) {
+                    final alarm = alarms[index];
+                    return Dismissible(
+                      key: Key(alarm.id.toString()),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        color: Colors.red,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        child: const Icon(Icons.delete, color: Colors.white),
+                      ),
+                      onDismissed: (direction) => _deleteAlarm(index),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[900],
+                          borderRadius: BorderRadius.circular(15),
+                          // v5 uses withValues
+                          border: Border.all(color: alarm.isActive ? Colors.red.withValues(alpha: 0.5) : Colors.transparent)
+                        ),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          title: Text(
+                            "${alarm.time.hour.toString().padLeft(2, '0')}:${alarm.time.minute.toString().padLeft(2, '0')}",
+                            style: TextStyle(
+                              fontSize: 40, 
+                              fontWeight: FontWeight.bold,
+                              color: alarm.isActive ? Colors.white : Colors.grey
+                            ),
+                          ),
+                          subtitle: Text(alarm.isActive ? "Active" : "Inactive", style: const TextStyle(color: Colors.grey)),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.white54),
+                                onPressed: () => _deleteAlarm(index),
+                              ),
+                              Switch(
+                                value: alarm.isActive,
+                                activeTrackColor: Colors.red, 
+                                onChanged: (value) => _toggleAlarm(index, value),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                icon: Icon(isAlarmActive ? Icons.alarm_off : Icons.alarm_add, size: 30),
-                label: Text(
-                  isAlarmActive ? AppStrings.get('btn_cancel', currentLang) : AppStrings.get('btn_set', currentLang),
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)
-                ),
-              ),
-            ),
           ),
         ],
       ),
@@ -496,8 +697,15 @@ class RingScreen extends StatefulWidget {
   final List<String> targetBarcodes;
   final bool startWithoutVibration;
   final String language;
+  final int alarmId; 
 
-  const RingScreen({super.key, required this.targetBarcodes, this.startWithoutVibration = false, required this.language});
+  const RingScreen({
+    super.key, 
+    required this.targetBarcodes, 
+    this.startWithoutVibration = false, 
+    required this.language,
+    required this.alarmId,
+  });
 
   @override
   State<RingScreen> createState() => _RingScreenState();
@@ -508,7 +716,6 @@ class _RingScreenState extends State<RingScreen> {
   bool isVibrationStopped = false;
   bool isCameraReady = false;
   late String randomFact;
-
   bool _showEmergencyButton = false;
   Timer? _emergencyTimer;
 
@@ -519,34 +726,27 @@ class _RingScreenState extends State<RingScreen> {
     randomFact = AppStrings.getRandomFact(widget.language);
 
     _emergencyTimer = Timer(const Duration(seconds: 60), () {
-      if (mounted) {
-        setState(() => _showEmergencyButton = true);
-      }
+      if (mounted) setState(() => _showEmergencyButton = true);
     });
 
-    if (isVibrationStopped) {
-      _delayedCameraInit();
-    } else {
-      _initController();
-      isCameraReady = true;
-    }
-  }
-
-  Future<void> _delayedCameraInit() async {
-    await Future.delayed(const Duration(milliseconds: 2500));
-    if (mounted) {
-      setState(() {
+    // POCO C40 & YÜKSEK PERFORMANS FIX
+    // Gecikmeyi kaldırdık, sadece UI hazır olunca başlatıyoruz.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
         _initController();
-        isCameraReady = true;
-      });
-    }
+        setState(() => isCameraReady = true);
+      }
+    });
   }
 
   void _initController() {
+    // EN KALİTELİ MOD + GÜVENLİ BAŞLATMA
     controller = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates,
+      // noDuplicates = En iyi okuma kalitesi
+      detectionSpeed: DetectionSpeed.noDuplicates, 
       returnImage: false,
       torchEnabled: false,
+      autoStart: true, 
     );
   }
 
@@ -556,12 +756,15 @@ class _RingScreenState extends State<RingScreen> {
 
   void _handleEmergencyStop() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_ringing', false); // Bayrağı indir, hile sayılmasın
+    await prefs.setBool('is_ringing', false); 
 
     setState(() => isLocked = true);
-    Alarm.stop(42);
+    Alarm.stop(widget.alarmId); 
     HapticFeedback.lightImpact();
+    if (!mounted) return;
     Navigator.pop(context);
+    
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("⚠️ ${AppStrings.get('alarm_cancelled', widget.language)}")),
     );
@@ -572,33 +775,59 @@ class _RingScreenState extends State<RingScreen> {
     if (isLocked) return;
     setState(() => isLocked = true);
 
-    // 1. Alarmı Durdur
-    await Alarm.stop(42);
+    // Kritik: Alarmı önce durdur, CPU rahatlasın
+    await Alarm.stop(widget.alarmId); 
     HapticFeedback.heavyImpact();
 
-    // 2. Hile Bayrağını İndir
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_ringing', false);
 
-    // 3. STREAK HESAPLAMA
     String today = DateTime.now().toString().split(' ')[0];
     String? lastScan = prefs.getString('last_scan_date');
     int currentStreak = prefs.getInt('user_streak') ?? 0;
+    int currentTokens = prefs.getInt('snooze_tokens') ?? 0;
 
     if (lastScan != today) {
         currentStreak++;
         await prefs.setInt('user_streak', currentStreak);
         await prefs.setString('last_scan_date', today);
-    }
 
-    if(mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("TEBRİKLER! 🔥 $currentStreak. GÜN!\n\n${AppStrings.get('morning_msg', widget.language)} \n${randomFact}"),
-          duration: const Duration(seconds: 8),
-          backgroundColor: Colors.green,
-        ),
-      );
+        bool tokenEarned = false;
+        if (currentStreak % 3 == 0 && currentTokens < 3) {
+           currentTokens++;
+           await prefs.setInt('snooze_tokens', currentTokens);
+           tokenEarned = true;
+        }
+
+        if(mounted) {
+          String msg = "🔥 $currentStreak ${AppStrings.get('streak_day', widget.language)}";
+          if (tokenEarned) {
+             msg += "\n🎁 +1 ${AppStrings.get('token_name', widget.language)}!";
+          }
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "$msg\n\n${AppStrings.get('morning_msg', widget.language)} \n$randomFact",
+                textAlign: TextAlign.center,
+              ),
+              duration: const Duration(seconds: 8),
+              backgroundColor: tokenEarned ? Colors.blueAccent : Colors.green,
+            ),
+          );
+        }
+    } else {
+       if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "${AppStrings.get('morning_msg', widget.language)}\n\n$randomFact",
+                textAlign: TextAlign.center
+              ), 
+              backgroundColor: Colors.green
+            ),
+          );
+       }
     }
 
     await Future.delayed(const Duration(seconds: 2));
@@ -643,7 +872,7 @@ class _RingScreenState extends State<RingScreen> {
                   children: [
                     CircularProgressIndicator(color: Colors.white),
                     SizedBox(height: 20),
-                    Text("Kamera başlatılıyor...", style: TextStyle(color: Colors.white))
+                    Text("Starting Camera...", style: TextStyle(color: Colors.white))
                   ],
                 ),
               ),
@@ -654,7 +883,7 @@ class _RingScreenState extends State<RingScreen> {
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
-                    decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(20)),
+                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(20)),
                     child: Text(AppStrings.get('scan_instructions', widget.language), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(height: 300),
@@ -699,7 +928,7 @@ class _RingScreenState extends State<RingScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.6),
+                      color: Colors.black.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(30),
                       border: Border.all(color: Colors.redAccent, width: 2)
                     ),
@@ -723,7 +952,6 @@ class _RingScreenState extends State<RingScreen> {
   }
 }
 
-// --- EKSİK OLAN KISIM EKLENDİ ---
 class ScannerScreen extends StatefulWidget {
   final String language;
   const ScannerScreen({super.key, required this.language});
@@ -780,46 +1008,72 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 }
 
+class AlarmEntity {
+  final int id;         
+  TimeOfDay time;       
+  bool isActive;
+  
+  AlarmEntity({
+    required this.id,
+    required this.time,
+    this.isActive = true,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'hour': time.hour,
+    'minute': time.minute,
+    'isActive': isActive,
+  };
+
+  factory AlarmEntity.fromJson(Map<String, dynamic> json) {
+    return AlarmEntity(
+      id: json['id'],
+      time: TimeOfDay(hour: json['hour'], minute: json['minute']),
+      isActive: json['isActive'],
+    );
+  }
+}
+
 class AppStrings {
   static const Map<String, Map<String, String>> _localizedValues = {
     'notification_body': {'tr': 'Susmak için barkodu okut!', 'en': 'Scan barcode to stop alarm!'},
-    'status_active': {'tr': 'ALARM KURULU', 'en': 'ALARM ACTIVE'},
-    'status_inactive': {'tr': 'Saati değiştirmek için dokun', 'en': 'Tap clock to change time'},
     'saved_items': {'tr': 'Kayıtlı Ürünler', 'en': 'Saved Items'},
-    'list_empty': {'tr': 'Alarm kurmak için (+) butonuna basıp ürün ekle.', 'en': 'Press (+) to add an item to scan.'},
+    'list_empty': {'tr': 'Barkod eklemek için tarama ikonuna bas.', 'en': 'Tap scanner icon to add barcodes.'},
     'item': {'tr': 'Ürün', 'en': 'Item'},
-    'btn_set': {'tr': 'ALARMI KUR', 'en': 'SET ALARM'},
-    'btn_cancel': {'tr': 'ALARMI İPTAL ET', 'en': 'CANCEL ALARM'},
+    'alarm_cancelled': {'tr': 'Alarm İptal Edildi 🔕', 'en': 'Alarm Cancelled 🔕'},
     'scan_instructions': {'tr': 'SUSMAK İÇİN\nTANIMLI ÜRÜNÜ\nOKUT!', 'en': 'SCAN ITEM\nTO STOP!'},
     'morning_msg': {'tr': 'GÜNAYDIN ŞAMPİYON! ☀️', 'en': 'GOOD MORNING CHAMPION! ☀️'},
     'camera_fix_btn': {'tr': 'KAMERA ODAKLAMIYOR MU?\nTİTREŞİMİ KES', 'en': 'CAMERA BLURRY?\nCUT VIBRATION'},
     'scan_title': {'tr': 'Ürün Tara', 'en': 'Scan Item'},
     'flash_hint': {'tr': 'Karanlıktaysa flaşı aç 👆', 'en': 'Turn on flash if dark 👆'},
-    'max_items': {'tr': 'En fazla 3 ürün eklenebilir.', 'en': 'Max 3 items allowed.'},
     'item_exists': {'tr': 'Bu ürün zaten ekli!', 'en': 'Item already exists!'},
     'item_added': {'tr': 'Ürün Eklendi! ✅', 'en': 'Item Added! ✅'},
     'add_item_first': {'tr': 'Önce barkod ekle!', 'en': 'Add an item first!'},
     'test_start': {'tr': '5 saniye sonra çalacak...', 'en': 'Ringing in 5 seconds...'},
-    'alarm_cancelled': {'tr': 'Alarm İptal Edildi 🔕', 'en': 'Alarm Cancelled 🔕'},
-    'alarm_set': {'tr': 'Alarm kuruldu:', 'en': 'Alarm set for'},
     'battery_title': {'tr': '⚠️ Önemli Uyarı', 'en': '⚠️ Important'},
     'battery_desc': {
       'tr': 'Alarmın garanti çalması ve uygulamanın kapanmaması için açılan ekranda şunları yapmalısınız:\n\n'
             '1. PİL/BATARYA: "Kısıtlama Yok" veya "Sınırsız" seçeneğini seçin.\n'
             '2. BAŞLATMA: Varsa "Otomatik Başlatma" veya "Arka Planda Çalışma" iznini açın.',
-      
       'en': 'To ensure the alarm rings reliably, please adjust these settings in the next screen:\n\n'
             '1. BATTERY: Select "Unrestricted" or "No Restrictions".\n'
             '2. LAUNCH: Enable "Autostart" or "Run in Background" if available.'
     },
     'btn_close': {'tr': 'Kapat', 'en': 'Close'},
     'emergency_btn': {'tr': 'ACİL DURUM KAPAT', 'en': 'EMERGENCY STOP'},
-    
-    // --- HİLE MESAJI ---
+    'cheat_title': {'tr': '🚨 HİLE TESPİT EDİLDİ! 🚨', 'en': '🚨 CHEAT DETECTED! 🚨'},
     'cheat_msg': {
       'tr': 'Dün alarm çalarken uygulamayı zorla kapatıp kaçtığını tespit ettik.\n\nBu davranış "NoSnooze" ruhuna aykırı!\n\nCEZA: Seri (Streak) sıfırlandı.',
       'en': 'We detected that you forced closed the app while the alarm was ringing.\n\nThis is against the "NoSnooze" spirit!\n\nPENALTY: Streak reset.'
-    }
+    },
+    'max_items': {'tr': 'En fazla 3 ürün eklenebilir.', 'en': 'Max 3 items allowed.'},
+    'streak_title': {'tr': 'Ateş Serisi (Streak)', 'en': 'Fire Streak'},
+    'streak_desc': {'tr': 'Her gün zamanında uyanarak seriyi koru. Ateşin sönmesin!', 'en': 'Wake up on time daily to keep the fire burning!'},
+    'token_title': {'tr': 'Erteleme Jetonu', 'en': 'Snooze Token'},
+    'token_desc': {'tr': 'Her 3 günlük seride 1 jeton kazanırsın. En fazla 3 jeton birikebilir.', 'en': 'Earn 1 token every 3-day streak. Max 3 tokens allowed.'},
+    'streak_day': {'tr': '. Gün', 'en': '. Day'},
+    'token_name': {'tr': 'Jeton', 'en': 'Token'},
   };
   
   static const Map<String, List<String>> _sleepFacts = {
