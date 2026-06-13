@@ -6,7 +6,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_localizations/flutter_localizations.dart'; 
+import 'package:flutter_fgbg/flutter_fgbg.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -286,6 +287,10 @@ class _HomeScreenState extends State<HomeScreen> {
   int streakCount = 0;
   int snoozeTokens = 0;
   StreamSubscription? alarmSubscription;
+  // FIX-02 / D-01a: app-level foreground/background detection while an alarm is
+  // ringing. A genuine FGBGType.background event = real escape (sets
+  // escape_detected). flutter_fgbg is already a transitive dep (no new package).
+  StreamSubscription<FGBGType>? _fgbgSubscription;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -308,7 +313,26 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     alarmSubscription?.cancel();
+    _fgbgSubscription?.cancel();
     super.dispose();
+  }
+
+  // FIX-02 / D-01a: begin watching for a real app-level escape while ringing.
+  // Mirrors the alarmSubscription subscribe/cancel shape (:316 / dispose).
+  Future<void> _startEscapeWatch() async {
+    await _fgbgSubscription?.cancel();
+    _fgbgSubscription = FGBGEvents.instance.stream.listen((event) async {
+      if (event == FGBGType.background) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('escape_detected', true);
+      }
+    });
+  }
+
+  // Stop watching once the alarm is dismissed (any path).
+  Future<void> _stopEscapeWatch() async {
+    await _fgbgSubscription?.cancel();
+    _fgbgSubscription = null;
   }
 
   void _startAlarmListener() {
@@ -316,6 +340,13 @@ class _HomeScreenState extends State<HomeScreen> {
     alarmSubscription = Alarm.ringStream.stream.listen((alarmSettings) async {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('is_ringing', true);
+      // D-01b: record the wall-clock start of the ringing window (boot-guard
+      // record; escape_detected is the primary discriminator). Fresh ring =>
+      // no prior escape yet.
+      await prefs.setInt('is_ringing_set_at', DateTime.now().millisecondsSinceEpoch);
+      await prefs.setBool('escape_detected', false);
+      // Begin app-level escape detection while ringing (FIX-02 / D-01a).
+      await _startEscapeWatch();
 
       final index = alarms.indexWhere((element) => element.id == alarmSettings.id);
       
@@ -329,16 +360,25 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
 
       if (savedBarcodes.isNotEmpty) {
+        // Pitfall 1: the camera-permission dialog backgrounds the app. Request
+        // it inside FGBGEvents.ignoreWhile so it does NOT register as a real
+        // escape (only genuine FGBGType.background during scanning should).
+        await FGBGEvents.ignoreWhile(() async {
+          await Permission.camera.request();
+        });
+
+        if (!mounted) return;
+
         final result = await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => RingScreen(
               targetBarcodes: savedBarcodes,
               startWithoutVibration: !alarmSettings.vibrate,
-              language: currentLang, 
+              language: currentLang,
               alarmId: alarmSettings.id,
               availableTokens: snoozeTokens,
-              label: index != -1 ? alarms[index].label : '', 
+              label: index != -1 ? alarms[index].label : '',
             ),
           ),
         );
@@ -378,22 +418,45 @@ class _HomeScreenState extends State<HomeScreen> {
                await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label);
            }
            
-           _loadPreferences(); 
+           _loadPreferences();
         }
+
+        // Ring window is over (any dismiss path): stop watching for escapes and
+        // clear the transient flag so a clean dismiss leaves no stale signal.
+        await _stopEscapeWatch();
+        await prefs.setBool('escape_detected', false);
       }
     });
   }
 
   Future<void> _checkCheatStatus() async {
     final prefs = await SharedPreferences.getInstance();
+    // FIX-02 / D-01: decide via the pure fn instead of unconditionally resetting.
     bool wasRinging = prefs.getBool('is_ringing') ?? false;
+    bool escapeDetected = prefs.getBool('escape_detected') ?? false;
+    final verdict = decideCheat(wasRinging: wasRinging, escapeDetected: escapeDetected);
 
-    if (wasRinging) {
-      await prefs.setBool('is_ringing', false); 
-      await prefs.setInt('user_streak', 0); 
-      await prefs.setInt('snooze_tokens', 0);
-      
-      if (mounted) {
+    switch (verdict) {
+      case CheatVerdict.none:
+        // App was not ringing — nothing to judge, streak preserved.
+        return;
+
+      case CheatVerdict.preserve:
+        // OEM-kill / crash / reboot assumption (D-01): the user did NOT
+        // genuinely escape, so streak/tokens are KEPT. Only clear the leftover
+        // ringing flags; no reset dialog. (flag-clear analog :1255/:1278.)
+        await prefs.setBool('is_ringing', false);
+        await prefs.setBool('escape_detected', false);
+        return;
+
+      case CheatVerdict.reset:
+        // Genuine FGBG escape while ringing => reset (original behavior).
+        await prefs.setBool('is_ringing', false);
+        await prefs.setBool('escape_detected', false);
+        await prefs.setInt('user_streak', 0);
+        await prefs.setInt('snooze_tokens', 0);
+
+        if (!mounted) return;
         setState(() {
           streakCount = 0;
           snoozeTokens = 0;
@@ -411,7 +474,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         );
-      }
     }
   }
 
