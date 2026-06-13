@@ -148,6 +148,104 @@ Future<void> scheduleAlarmFn(int id, DateTime dateTime, bool vibrate, String lan
   await Alarm.set(alarmSettings: alarmSettings);
 }
 
+// ---------------------------------------------------------------------------
+// Top-level pure functions + enums (Phase 1 testability seam).
+// These are the in-file extraction of bug-bearing decision logic so that
+// characterization tests can exercise them without a device. They are NOT a
+// modularization (no new files / module boundaries — that is Phase 2 / ARC-01).
+// State methods are wired to these in Plan 02/03; this plan only defines them.
+// ---------------------------------------------------------------------------
+
+/// Type of alarm that fired. Carried via [AlarmSettings.payload] (D-03/FIX-04).
+/// Legacy alarms with no payload default to [AlarmKind.real] (Pitfall 2).
+enum AlarmKind { real, test, snooze }
+
+/// Anti-cheat decision outcome on cold start (D-01/FIX-02).
+enum CheatVerdict { reset, preserve, none }
+
+/// FIX-02 / D-01: decide whether a leftover ringing flag means the user
+/// genuinely escaped (reset streak) or the app was OEM-killed/crashed/rebooted
+/// (preserve streak). If the app was not ringing, there is nothing to judge.
+///
+/// - !wasRinging                  => [CheatVerdict.none]
+/// - wasRinging && escapeDetected => [CheatVerdict.reset]
+/// - wasRinging && !escapeDetected => [CheatVerdict.preserve]
+CheatVerdict decideCheat({required bool wasRinging, required bool escapeDetected}) {
+  if (!wasRinging) return CheatVerdict.none;
+  return escapeDetected ? CheatVerdict.reset : CheatVerdict.preserve;
+}
+
+/// FIX-04 / D-02/D-03/D-04: a day counts toward the streak only when a REAL
+/// wake alarm is dismissed and the day has not already been counted. Test and
+/// snooze alarms never count; a second scan the same day is neutral.
+bool streakEligible(AlarmKind kind, String? lastScanDate, String today) =>
+    kind == AlarmKind.real && lastScanDate != today;
+
+/// FIX-05: monotonic id step. Pure helper backing the SharedPreferences
+/// `alarm_id_counter` so unit tests can assert it never collides.
+int incrementId(int prior) => prior + 1;
+
+/// UX-02 / D-09: default UI language when no `app_lang` is saved. English
+/// device locale => 'en'; every other locale (incl. TR and other languages)
+/// => 'tr'. Accepts either a bare language code ('en') or a full locale
+/// string ('en_US') — only the language prefix matters (RESEARCH Q3).
+String defaultLocaleLang(String deviceLocale) =>
+    deviceLocale.toLowerCase().startsWith('en') ? 'en' : 'tr';
+
+/// FIX-03 / D-05: per-entry resilient parse of the persisted `alarms_data`
+/// JSON. A single corrupt record skips ONLY itself; valid records are kept.
+/// Returns the recovered alarms plus the number of skipped (corrupt) records.
+///
+/// Never throws for malformed top-level input: null, empty, non-JSON, or a
+/// JSON value that is not a list all yield `([], 0)`.
+(List<AlarmEntity>, int) parseAlarmsResilient(String? alarmsJson) {
+  if (alarmsJson == null || alarmsJson.trim().isEmpty) return (<AlarmEntity>[], 0);
+
+  dynamic decoded;
+  try {
+    decoded = jsonDecode(alarmsJson);
+  } catch (_) {
+    // Whole string is not valid JSON — recover nothing, but do not crash.
+    return (<AlarmEntity>[], 0);
+  }
+
+  if (decoded is! List) return (<AlarmEntity>[], 0);
+
+  final List<AlarmEntity> parsed = [];
+  int skipped = 0;
+  for (final e in decoded) {
+    try {
+      parsed.add(AlarmEntity.fromJson(e as Map<String, dynamic>));
+    } catch (_) {
+      skipped++; // skip only this corrupt entry (D-05 per-entry)
+    }
+  }
+  return (parsed, skipped);
+}
+
+/// Next occurrence for an alarm. Top-level so `date_calc_test.dart` can
+/// characterize FIX-01 behavior. Behavior is preserved EXACTLY from the prior
+/// in-State implementation — this plan only makes it reachable.
+DateTime calculateAlarmDateTime(TimeOfDay time, List<int> repeatDays) {
+  DateTime now = DateTime.now();
+  DateTime target = DateTime(now.year, now.month, now.day, time.hour, time.minute);
+
+  if (repeatDays.isEmpty) {
+    if (target.isBefore(now)) {
+      return target.add(const Duration(days: 1));
+    }
+    return target;
+  }
+
+  while (true) {
+    if (target.isBefore(now) || !repeatDays.contains(target.weekday)) {
+      target = target.add(const Duration(days: 1));
+    } else {
+      return target;
+    }
+  }
+}
+
 class HomeScreen extends StatefulWidget {
   final Function(String) onLanguageChanged;
   final Function(bool) onThemeChanged;
@@ -528,26 +626,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  DateTime _calculateAlarmDateTime(TimeOfDay time, List<int> repeatDays) {
-    DateTime now = DateTime.now();
-    DateTime target = DateTime(now.year, now.month, now.day, time.hour, time.minute);
-
-    if (repeatDays.isEmpty) {
-      if (target.isBefore(now)) {
-        return target.add(const Duration(days: 1));
-      }
-      return target;
-    }
-
-    while (true) {
-       if (target.isBefore(now) || !repeatDays.contains(target.weekday)) {
-          target = target.add(const Duration(days: 1));
-       } else {
-          return target;
-       }
-    }
-  }
-
+  // Delegates to the top-level [calculateAlarmDateTime] (now unit-testable).
+  // Behavior is identical to the prior in-State implementation; existing call
+  // sites are unchanged.
+  DateTime _calculateAlarmDateTime(TimeOfDay time, List<int> repeatDays) =>
+      calculateAlarmDateTime(time, repeatDays);
 
   Future<void> _addAlarm() async {
     if (savedBarcodes.isEmpty) {
@@ -1473,12 +1556,46 @@ class AlarmEntity {
   };
 
   factory AlarmEntity.fromJson(Map<String, dynamic> json) {
+    // FIX-03 / D-05: validate field types instead of blind casts so corrupt
+    // records throw a clean [FormatException] (caught per-entry upstream)
+    // rather than a NoSuchMethodError / opaque type error.
+    final id = json['id'];
+    final hour = json['hour'];
+    final minute = json['minute'];
+    final isActive = json['isActive'];
+
+    if (id is! int) {
+      throw FormatException("AlarmEntity.fromJson: 'id' must be int, got ${id.runtimeType}");
+    }
+    if (hour is! int || hour < 0 || hour > 23) {
+      throw FormatException("AlarmEntity.fromJson: invalid 'hour': $hour");
+    }
+    if (minute is! int || minute < 0 || minute > 59) {
+      throw FormatException("AlarmEntity.fromJson: invalid 'minute': $minute");
+    }
+    if (isActive is! bool) {
+      throw FormatException("AlarmEntity.fromJson: 'isActive' must be bool, got ${isActive.runtimeType}");
+    }
+
+    final rawDays = json['repeatDays'];
+    List<int> repeatDays;
+    if (rawDays == null) {
+      repeatDays = const [];
+    } else if (rawDays is List && rawDays.every((d) => d is int)) {
+      repeatDays = rawDays.cast<int>();
+    } else {
+      throw FormatException("AlarmEntity.fromJson: 'repeatDays' must be List<int>, got ${rawDays.runtimeType}");
+    }
+
+    final rawLabel = json['label'];
+    final label = rawLabel == null ? '' : rawLabel.toString();
+
     return AlarmEntity(
-      id: json['id'],
-      time: TimeOfDay(hour: json['hour'], minute: json['minute']),
-      isActive: json['isActive'],
-      repeatDays: List<int>.from(json['repeatDays'] ?? []),
-      label: json['label'] ?? '',
+      id: id,
+      time: TimeOfDay(hour: hour, minute: minute),
+      isActive: isActive,
+      repeatDays: repeatDays,
+      label: label,
     );
   }
 }
