@@ -361,6 +361,20 @@ class _HomeScreenState extends State<HomeScreen> {
     _fgbgSubscription = null;
   }
 
+  /// FIX-01 (Pitfall 4): re-arm a REPEATING alarm to its next occurrence after
+  /// any dismiss path (success/snooze/restart/emergency) so it never silently
+  /// disappears. One-shot alarms (empty repeatDays) and unknown indices are a
+  /// no-op. CRITICAL: re-arm with the STABLE entity id (`alarms[index].id`),
+  /// never a transient `% N` id, so `Alarm.set` replaces the same occurrence
+  /// instead of double-scheduling. Canonical analog: the old inline SUCCESS
+  /// re-arm. Type is AlarmKind.real (a repeating wake alarm is always real).
+  Future<void> _rearmIfRepeating(int index) async {
+    if (index == -1) return;
+    if (alarms[index].repeatDays.isEmpty) return;
+    final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
+    await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
+  }
+
   void _startAlarmListener() {
     // ignore: deprecated_member_use
     alarmSubscription = Alarm.ringStream.stream.listen((alarmSettings) async {
@@ -435,15 +449,19 @@ class _HomeScreenState extends State<HomeScreen> {
            // camera/vibration stack settles (avoids camera-busy on restart).
            await Future.delayed(const Duration(milliseconds: kCameraRestartCooldownMs));
            await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real);
+           // FIX-01: the transient restart fire above is a one-off; a REPEATING
+           // alarm must still keep its next scheduled occurrence (stable id).
+           await _rearmIfRepeating(index);
         }
         else if (result == 'SNOOZE') {
            await prefs.setBool('is_ringing', false);
            await Alarm.stop(alarmSettings.id);
-           
+
            int newTokens = snoozeTokens - 1;
            if (newTokens < 0) newTokens = 0;
            await prefs.setInt('snooze_tokens', newTokens);
-           
+
+           // 5-min transient snooze alarm (separate, transient id).
            await scheduleAlarmFn(
              await nextAlarmId(prefs),
              DateTime.now().add(const Duration(minutes: 5)),
@@ -453,19 +471,26 @@ class _HomeScreenState extends State<HomeScreen> {
              "Snoozed",
              AlarmKind.snooze, // FIX-04 / D-03: snooze re-arm never earns streak.
            );
-           
+           // FIX-01: the snooze above is transient; the REPEATING entity must
+           // also be re-armed to its next occurrence (stable id) so it survives.
+           await _rearmIfRepeating(index);
+
            setState(() => snoozeTokens = newTokens);
            _showSnack(AppStrings.get('snooze_used', currentLang));
         }
         else if (result == 'SUCCESS') {
            await prefs.setBool('is_ringing', false);
-           
-           if (index != -1 && alarms[index].repeatDays.isNotEmpty) {
-               final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
-               await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
-           }
+
+           // FIX-01: re-arm the repeating alarm to its next occurrence.
+           await _rearmIfRepeating(index);
 
            _loadPreferences();
+        }
+        else if (result == 'EMERGENCY') {
+           // FIX-01: emergency stop halts the current fire, but a REPEATING
+           // alarm must still keep its next occurrence (no silent loss).
+           await prefs.setBool('is_ringing', false);
+           await _rearmIfRepeating(index);
         }
 
         // Ring window is over (any dismiss path): stop watching for escapes and
@@ -1371,14 +1396,17 @@ class _RingScreenState extends State<RingScreen> {
 
   void _handleEmergencyStop() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_ringing', false); 
+    await prefs.setBool('is_ringing', false);
 
     setState(() => isLocked = true);
-    Alarm.stop(widget.alarmId); 
+    await Alarm.stop(widget.alarmId);
     HapticFeedback.lightImpact();
     if (!mounted) return;
-    Navigator.pop(context);
-    
+    // FIX-01: return the 'EMERGENCY' sentinel (was an arg-less pop) so the
+    // dismiss chain in _startAlarmListener can re-arm a repeating alarm to its
+    // next occurrence. The user-facing cancelled-snackbar is shown there/here.
+    Navigator.pop(context, 'EMERGENCY');
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("⚠️ ${AppStrings.get('alarm_cancelled', widget.language)}")),
