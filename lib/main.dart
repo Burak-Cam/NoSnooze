@@ -132,25 +132,34 @@ class _NoSnoozeAppState extends State<NoSnoozeApp> {
   }
 }
 
-Future<void> scheduleAlarmFn(int id, DateTime dateTime, bool vibrate, String lang, String audioPath, String label) async {
+/// FIX-04 / D-07: the camera/vibration restart cooldown after a RESTART
+/// dismiss. Safe-side 2.5s value (RLS-05) — pinned by cooldown_value_test.dart.
+const int kCameraRestartCooldownMs = 2500;
+
+Future<void> scheduleAlarmFn(int id, DateTime dateTime, bool vibrate, String lang, String audioPath, String label, AlarmKind alarmType) async {
   final alarmSettings = AlarmSettings(
     id: id,
     dateTime: dateTime,
-    assetAudioPath: audioPath, 
+    assetAudioPath: audioPath,
     loopAudio: true,
     vibrate: vibrate,
+    // FIX-04 / D-03: carry the alarm TYPE out-of-band via payload so RingScreen
+    // can gate the streak (real vs test vs snooze). Legacy alarms with a null
+    // payload are treated as AlarmKind.real on decode (Pitfall 2). The label
+    // stays user-visible; payload is the machine-readable type channel.
+    payload: jsonEncode({'kind': alarmType.name}),
     volumeSettings: VolumeSettings.fade(
       volume: 1.0,
       fadeDuration: const Duration(seconds: 3),
       volumeEnforced: true,
     ),
     notificationSettings: NotificationSettings(
-      title: label.isEmpty ? 'NoSnooze' : label, 
+      title: label.isEmpty ? 'NoSnooze' : label,
       body: AppStrings.get('notification_body', lang),
       stopButton: null,
       icon: 'notification_icon',
     ),
-    warningNotificationOnKill: true, 
+    warningNotificationOnKill: true,
     androidFullScreenIntent: true,
   );
   await Alarm.set(alarmSettings: alarmSettings);
@@ -365,8 +374,25 @@ class _HomeScreenState extends State<HomeScreen> {
       // Begin app-level escape detection while ringing (FIX-02 / D-01a).
       await _startEscapeWatch();
 
+      // FIX-04 / D-03 (Pitfall 2): decode the alarm TYPE from the payload. A
+      // legacy alarm scheduled before this change has no payload (null/empty)
+      // and is treated as AlarmKind.real — back-compat, never crashes.
+      AlarmKind firedKind = AlarmKind.real;
+      final rawPayload = alarmSettings.payload;
+      if (rawPayload != null && rawPayload.isNotEmpty) {
+        try {
+          final decodedPayload = jsonDecode(rawPayload);
+          if (decodedPayload is Map && decodedPayload['kind'] is String) {
+            firedKind = AlarmKind.values.byName(decodedPayload['kind'] as String);
+          }
+        } catch (_) {
+          // Corrupt/unknown payload => safe default (real). Never crash on dismiss.
+          firedKind = AlarmKind.real;
+        }
+      }
+
       final index = alarms.indexWhere((element) => element.id == alarmSettings.id);
-      
+
       if (index != -1) {
         if (alarms[index].repeatDays.isEmpty) {
            if (mounted) setState(() => alarms[index].isActive = false);
@@ -396,6 +422,7 @@ class _HomeScreenState extends State<HomeScreen> {
               alarmId: alarmSettings.id,
               availableTokens: snoozeTokens,
               label: index != -1 ? alarms[index].label : '',
+              alarmKind: firedKind,
             ),
           ),
         );
@@ -404,9 +431,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
         if (result == 'RESTART') {
            await Alarm.stop(alarmSettings.id);
-           await Future.delayed(const Duration(milliseconds: 500));
-           await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '');
-        } 
+           // RLS-05 / D-07: safe-side 2.5s cooldown before re-firing so the
+           // camera/vibration stack settles (avoids camera-busy on restart).
+           await Future.delayed(const Duration(milliseconds: kCameraRestartCooldownMs));
+           await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real);
+        }
         else if (result == 'SNOOZE') {
            await prefs.setBool('is_ringing', false);
            await Alarm.stop(alarmSettings.id);
@@ -421,7 +450,8 @@ class _HomeScreenState extends State<HomeScreen> {
              true,
              currentLang,
              widget.currentRingtone,
-             "Snoozed"
+             "Snoozed",
+             AlarmKind.snooze, // FIX-04 / D-03: snooze re-arm never earns streak.
            );
            
            setState(() => snoozeTokens = newTokens);
@@ -432,9 +462,9 @@ class _HomeScreenState extends State<HomeScreen> {
            
            if (index != -1 && alarms[index].repeatDays.isNotEmpty) {
                final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
-               await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label);
+               await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
            }
-           
+
            _loadPreferences();
         }
 
@@ -569,7 +599,8 @@ class _HomeScreenState extends State<HomeScreen> {
       true,
       currentLang,
       widget.currentRingtone,
-      "Test"
+      "Test",
+      AlarmKind.test, // FIX-04 / D-03: a test alarm never earns streak.
     );
     if (!mounted) return;
     _showSnack(AppStrings.get('test_start', currentLang));
@@ -907,7 +938,7 @@ class _HomeScreenState extends State<HomeScreen> {
             isActive: true, 
           );
 
-          await scheduleAlarmFn(newAlarm.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel);
+          await scheduleAlarmFn(newAlarm.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real);
 
           setState(() {
             alarms.add(newAlarm);
@@ -933,8 +964,8 @@ class _HomeScreenState extends State<HomeScreen> {
       
       final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
       
-      await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label);
-      
+      await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
+
       if (mounted) _showRemainingTime(nextTime);
     } else {
       await Alarm.stop(alarms[index].id);
@@ -1273,18 +1304,20 @@ class RingScreen extends StatefulWidget {
   final List<String> targetBarcodes;
   final bool startWithoutVibration;
   final String language;
-  final int alarmId; 
-  final int availableTokens; 
-  final String label; 
+  final int alarmId;
+  final int availableTokens;
+  final String label;
+  final AlarmKind alarmKind; // FIX-04: type carried from payload to gate streak.
 
   const RingScreen({
-    super.key, 
-    required this.targetBarcodes, 
-    this.startWithoutVibration = false, 
+    super.key,
+    required this.targetBarcodes,
+    this.startWithoutVibration = false,
     required this.language,
     required this.alarmId,
     required this.availableTokens,
     required this.label,
+    required this.alarmKind,
   });
 
   @override
@@ -1368,7 +1401,11 @@ class _RingScreenState extends State<RingScreen> {
     int currentStreak = prefs.getInt('user_streak') ?? 0;
     int currentTokens = prefs.getInt('snooze_tokens') ?? 0;
 
-    if (lastScan != today) {
+    // FIX-04 / D-02,D-03,D-04: a day counts only for a REAL wake alarm not yet
+    // counted today. Test and snooze re-arms never earn streak; a second scan
+    // the same day is neutral (streakEligible folds in the lastScan != today
+    // guard). Snooze stays streak-neutral here AND on its re-arm path.
+    if (streakEligible(widget.alarmKind, lastScan, today)) {
         currentStreak++;
         await prefs.setInt('user_streak', currentStreak);
         await prefs.setString('last_scan_date', today);
