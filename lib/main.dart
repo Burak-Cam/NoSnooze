@@ -16,15 +16,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'constants/app_constants.dart';
 import 'l10n/app_strings.dart';
 import 'models/alarm_entity.dart';
+import 'services/alarm_service.dart';
 import 'services/prefs_service.dart';
+import 'services/streak_service.dart';
 
-// Re-export shim (RESEARCH Pattern 1): the 7 characterization tests import
+// Re-export shim (RESEARCH Pattern 1): the characterization tests import
 // `package:no_snooze/main.dart`, so the symbols extracted into the modules
 // below stay reachable from this file. 02-04 rewrites the test imports and
 // drops these exports.
 export 'constants/app_constants.dart';
 export 'l10n/app_strings.dart';
 export 'models/alarm_entity.dart';
+export 'services/alarm_service.dart';
+export 'services/streak_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -143,101 +147,6 @@ class _NoSnoozeAppState extends State<NoSnoozeApp> {
         currentRingtone: _currentRingtone,
       ),
     );
-  }
-}
-
-Future<void> scheduleAlarmFn(int id, DateTime dateTime, bool vibrate, String lang, String audioPath, String label, AlarmKind alarmType) async {
-  final alarmSettings = AlarmSettings(
-    id: id,
-    dateTime: dateTime,
-    assetAudioPath: audioPath,
-    loopAudio: true,
-    vibrate: vibrate,
-    // FIX-04 / D-03: carry the alarm TYPE out-of-band via payload so RingScreen
-    // can gate the streak (real vs test vs snooze). Legacy alarms with a null
-    // payload are treated as AlarmKind.real on decode (Pitfall 2). The label
-    // stays user-visible; payload is the machine-readable type channel.
-    payload: jsonEncode({'kind': alarmType.name}),
-    volumeSettings: VolumeSettings.fade(
-      volume: 1.0,
-      fadeDuration: const Duration(seconds: 3),
-      volumeEnforced: true,
-    ),
-    notificationSettings: NotificationSettings(
-      title: label.isEmpty ? 'NoSnooze' : label,
-      body: AppStrings.get('notification_body', lang),
-      stopButton: null,
-      icon: 'notification_icon',
-    ),
-    warningNotificationOnKill: true,
-    androidFullScreenIntent: true,
-  );
-  await Alarm.set(alarmSettings: alarmSettings);
-}
-
-// ---------------------------------------------------------------------------
-// Top-level pure functions + enums (Phase 1 testability seam).
-// These are the in-file extraction of bug-bearing decision logic so that
-// characterization tests can exercise them without a device. They are NOT a
-// modularization (no new files / module boundaries — that is Phase 2 / ARC-01).
-// State methods are wired to these in Plan 02/03; this plan only defines them.
-// ---------------------------------------------------------------------------
-
-/// Anti-cheat decision outcome on cold start (D-01/FIX-02).
-enum CheatVerdict { reset, preserve, none }
-
-/// FIX-02 / D-01: decide whether a leftover ringing flag means the user
-/// genuinely escaped (reset streak) or the app was OEM-killed/crashed/rebooted
-/// (preserve streak). If the app was not ringing, there is nothing to judge.
-///
-/// - !wasRinging                  => [CheatVerdict.none]
-/// - wasRinging && escapeDetected => [CheatVerdict.reset]
-/// - wasRinging && !escapeDetected => [CheatVerdict.preserve]
-CheatVerdict decideCheat({required bool wasRinging, required bool escapeDetected}) {
-  if (!wasRinging) return CheatVerdict.none;
-  return escapeDetected ? CheatVerdict.reset : CheatVerdict.preserve;
-}
-
-/// FIX-04 / D-02/D-03/D-04: a day counts toward the streak only when a REAL
-/// wake alarm is dismissed and the day has not already been counted. Test and
-/// snooze alarms never count; a second scan the same day is neutral.
-bool streakEligible(AlarmKind kind, String? lastScanDate, String today) =>
-    kind == AlarmKind.real && lastScanDate != today;
-
-/// FIX-05: monotonic id step. Pure helper backing the SharedPreferences
-/// `alarm_id_counter` so unit tests can assert it never collides.
-int incrementId(int prior) => prior + 1;
-
-/// FIX-05 (RESEARCH Q1): mint the next unique alarm id from the persisted
-/// monotonic counter `alarm_id_counter`. Used for ALL ids — entity, snooze and
-/// test alarms — so two alarms minted in the same millisecond never collide
-/// (the old `% N` of millisecondsSinceEpoch could). Persists before returning.
-Future<int> nextAlarmId(PrefsService prefs) async {
-  final next = incrementId(prefs.alarmIdCounter);
-  await prefs.setAlarmIdCounter(next);
-  return next;
-}
-
-/// Next occurrence for an alarm. Top-level so `date_calc_test.dart` can
-/// characterize FIX-01 behavior. Behavior is preserved EXACTLY from the prior
-/// in-State implementation — this plan only makes it reachable.
-DateTime calculateAlarmDateTime(TimeOfDay time, List<int> repeatDays) {
-  DateTime now = DateTime.now();
-  DateTime target = DateTime(now.year, now.month, now.day, time.hour, time.minute);
-
-  if (repeatDays.isEmpty) {
-    if (target.isBefore(now)) {
-      return target.add(const Duration(days: 1));
-    }
-    return target;
-  }
-
-  while (true) {
-    if (target.isBefore(now) || !repeatDays.contains(target.weekday)) {
-      target = target.add(const Duration(days: 1));
-    } else {
-      return target;
-    }
   }
 }
 
