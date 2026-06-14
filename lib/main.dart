@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'constants/app_constants.dart';
 import 'l10n/app_strings.dart';
 import 'models/alarm_entity.dart';
+import 'services/prefs_service.dart';
 
 // Re-export shim (RESEARCH Pattern 1): the 7 characterization tests import
 // `package:no_snooze/main.dart`, so the symbols extracted into the modules
@@ -60,36 +61,36 @@ class _NoSnoozeAppState extends State<NoSnoozeApp> {
   }
 
   Future<void> _loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = PrefsService(await SharedPreferences.getInstance());
     setState(() {
-      String? savedLang = prefs.getString('app_lang');
+      String? savedLang = prefs.appLang;
       // UX-02 / D-09: saved preference wins; otherwise fall back to the
       // device-aware default instead of a hard English default.
       _locale = Locale(savedLang ??
           defaultLocaleLang(PlatformDispatcher.instance.locale.languageCode));
-      
-      bool isDark = prefs.getBool('is_dark_mode') ?? true;
+
+      bool isDark = prefs.isDarkMode;
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
 
-      _currentRingtone = prefs.getString('ringtone_path') ?? 'assets/sounds/alarm1.mp3';
+      _currentRingtone = prefs.ringtonePath;
     });
   }
 
   void setLanguage(String langCode) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('app_lang', langCode);
+    final prefs = PrefsService(await SharedPreferences.getInstance());
+    await prefs.setAppLang(langCode);
     setState(() => _locale = Locale(langCode));
   }
 
   void toggleTheme(bool isDark) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_dark_mode', isDark);
+    final prefs = PrefsService(await SharedPreferences.getInstance());
+    await prefs.setDarkMode(isDark);
     setState(() => _themeMode = isDark ? ThemeMode.dark : ThemeMode.light);
   }
 
   void setRingtone(String path) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('ringtone_path', path);
+    final prefs = PrefsService(await SharedPreferences.getInstance());
+    await prefs.setRingtonePath(path);
     setState(() => _currentRingtone = path);
   }
 
@@ -211,9 +212,9 @@ int incrementId(int prior) => prior + 1;
 /// monotonic counter `alarm_id_counter`. Used for ALL ids — entity, snooze and
 /// test alarms — so two alarms minted in the same millisecond never collide
 /// (the old `% N` of millisecondsSinceEpoch could). Persists before returning.
-Future<int> nextAlarmId(SharedPreferences prefs) async {
-  final next = incrementId(prefs.getInt('alarm_id_counter') ?? 0);
-  await prefs.setInt('alarm_id_counter', next);
+Future<int> nextAlarmId(PrefsService prefs) async {
+  final next = incrementId(prefs.alarmIdCounter);
+  await prefs.setAlarmIdCounter(next);
   return next;
 }
 
@@ -316,8 +317,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await _fgbgSubscription?.cancel();
     _fgbgSubscription = FGBGEvents.instance.stream.listen((event) async {
       if (event == FGBGType.background) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('escape_detected', true);
+        final prefs = PrefsService(await SharedPreferences.getInstance());
+        await prefs.setEscapeDetected(true);
       }
     });
   }
@@ -345,13 +346,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void _startAlarmListener() {
     // ignore: deprecated_member_use
     alarmSubscription = Alarm.ringStream.stream.listen((alarmSettings) async {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('is_ringing', true);
+      final prefs = PrefsService(await SharedPreferences.getInstance());
+      await prefs.setRinging(true);
       // D-01b: record the wall-clock start of the ringing window (boot-guard
       // record; escape_detected is the primary discriminator). Fresh ring =>
       // no prior escape yet.
-      await prefs.setInt('is_ringing_set_at', DateTime.now().millisecondsSinceEpoch);
-      await prefs.setBool('escape_detected', false);
+      await prefs.setRingingSetAt(DateTime.now().millisecondsSinceEpoch);
+      await prefs.setEscapeDetected(false);
       // Begin app-level escape detection while ringing (FIX-02 / D-01a).
       await _startEscapeWatch();
 
@@ -421,12 +422,12 @@ class _HomeScreenState extends State<HomeScreen> {
            await _rearmIfRepeating(index);
         }
         else if (result == 'SNOOZE') {
-           await prefs.setBool('is_ringing', false);
+           await prefs.setRinging(false);
            await Alarm.stop(alarmSettings.id);
 
            int newTokens = snoozeTokens - 1;
            if (newTokens < 0) newTokens = 0;
-           await prefs.setInt('snooze_tokens', newTokens);
+           await prefs.setSnoozeTokens(newTokens);
 
            // 5-min transient snooze alarm (separate, transient id).
            await scheduleAlarmFn(
@@ -446,7 +447,7 @@ class _HomeScreenState extends State<HomeScreen> {
            _showSnack(AppStrings.get('snooze_used', currentLang));
         }
         else if (result == 'SUCCESS') {
-           await prefs.setBool('is_ringing', false);
+           await prefs.setRinging(false);
 
            // FIX-01: re-arm the repeating alarm to its next occurrence.
            await _rearmIfRepeating(index);
@@ -456,23 +457,23 @@ class _HomeScreenState extends State<HomeScreen> {
         else if (result == 'EMERGENCY') {
            // FIX-01: emergency stop halts the current fire, but a REPEATING
            // alarm must still keep its next occurrence (no silent loss).
-           await prefs.setBool('is_ringing', false);
+           await prefs.setRinging(false);
            await _rearmIfRepeating(index);
         }
 
         // Ring window is over (any dismiss path): stop watching for escapes and
         // clear the transient flag so a clean dismiss leaves no stale signal.
         await _stopEscapeWatch();
-        await prefs.setBool('escape_detected', false);
+        await prefs.setEscapeDetected(false);
       }
     });
   }
 
   Future<void> _checkCheatStatus() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = PrefsService(await SharedPreferences.getInstance());
     // FIX-02 / D-01: decide via the pure fn instead of unconditionally resetting.
-    bool wasRinging = prefs.getBool('is_ringing') ?? false;
-    bool escapeDetected = prefs.getBool('escape_detected') ?? false;
+    bool wasRinging = prefs.isRinging;
+    bool escapeDetected = prefs.escapeDetected;
     final verdict = decideCheat(wasRinging: wasRinging, escapeDetected: escapeDetected);
 
     switch (verdict) {
@@ -484,16 +485,16 @@ class _HomeScreenState extends State<HomeScreen> {
         // OEM-kill / crash / reboot assumption (D-01): the user did NOT
         // genuinely escape, so streak/tokens are KEPT. Only clear the leftover
         // ringing flags; no reset dialog. (flag-clear analog :1255/:1278.)
-        await prefs.setBool('is_ringing', false);
-        await prefs.setBool('escape_detected', false);
+        await prefs.setRinging(false);
+        await prefs.setEscapeDetected(false);
         return;
 
       case CheatVerdict.reset:
         // Genuine FGBG escape while ringing => reset (original behavior).
-        await prefs.setBool('is_ringing', false);
-        await prefs.setBool('escape_detected', false);
-        await prefs.setInt('user_streak', 0);
-        await prefs.setInt('snooze_tokens', 0);
+        await prefs.setRinging(false);
+        await prefs.setEscapeDetected(false);
+        await prefs.setUserStreak(0);
+        await prefs.setSnoozeTokens(0);
 
         if (!mounted) return;
         setState(() {
@@ -518,8 +519,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _checkBatteryOptimization() async {
     if (await Permission.ignoreBatteryOptimizations.isGranted) return;
-    final prefs = await SharedPreferences.getInstance();
-    bool hasSeenWarning = prefs.getBool('battery_dialog_seen') ?? false;
+    final prefs = PrefsService(await SharedPreferences.getInstance());
+    bool hasSeenWarning = prefs.batteryDialogSeen;
     if (hasSeenWarning) return;
 
     if (!mounted) return;
@@ -531,8 +532,8 @@ class _HomeScreenState extends State<HomeScreen> {
         title: Text(AppStrings.get('battery_title', currentLang)),
         content: Text(AppStrings.get('battery_desc', currentLang)),
         actions: [
-          TextButton(onPressed: () async { await prefs.setBool('battery_dialog_seen', true); if (context.mounted) Navigator.pop(context); }, child: Text(AppStrings.get('btn_close', currentLang), style: const TextStyle(color: Colors.grey))),
-          TextButton(onPressed: () async { await prefs.setBool('battery_dialog_seen', true); if (context.mounted) Navigator.pop(context); await openAppSettings(); }, child: const Text("OK", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))),
+          TextButton(onPressed: () async { await prefs.setBatteryDialogSeen(true); if (context.mounted) Navigator.pop(context); }, child: Text(AppStrings.get('btn_close', currentLang), style: const TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () async { await prefs.setBatteryDialogSeen(true); if (context.mounted) Navigator.pop(context); await openAppSettings(); }, child: const Text("OK", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))),
         ],
       ),
     );
@@ -545,16 +546,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = PrefsService(await SharedPreferences.getInstance());
     if (!mounted) return;
     // FIX-03 / D-05: per-entry resilient parse — a single corrupt record skips
     // only itself instead of wiping the whole list (no app crash on load).
-    final String? alarmsJson = prefs.getString('alarms_data');
+    final String? alarmsJson = prefs.alarmsData;
     final (parsedAlarms, skipped) = parseAlarmsResilient(alarmsJson);
     setState(() {
-      savedBarcodes = prefs.getStringList('target_barcodes') ?? [];
-      streakCount = prefs.getInt('user_streak') ?? 0;
-      snoozeTokens = prefs.getInt('snooze_tokens') ?? 0;
+      savedBarcodes = prefs.targetBarcodes;
+      streakCount = prefs.userStreak;
+      snoozeTokens = prefs.snoozeTokens;
       alarms = parsedAlarms;
     });
 
@@ -569,9 +570,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _saveAlarms() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = PrefsService(await SharedPreferences.getInstance());
     String encoded = jsonEncode(alarms.map((e) => e.toJson()).toList());
-    await prefs.setString('alarms_data', encoded);
+    await prefs.setAlarmsData(encoded);
   }
 
   Future<void> _testAlarm() async {
@@ -584,7 +585,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     final now = DateTime.now();
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = PrefsService(await SharedPreferences.getInstance());
     await scheduleAlarmFn(
       await nextAlarmId(prefs),
       now.add(const Duration(seconds: 5)),
@@ -619,9 +620,9 @@ class _HomeScreenState extends State<HomeScreen> {
               actions: [
                 TextButton(
                   onPressed: () async {
-                    final prefs = await SharedPreferences.getInstance();
-                    await prefs.setInt('user_streak', tempStreak);
-                    await prefs.setInt('snooze_tokens', tempTokens);
+                    final prefs = PrefsService(await SharedPreferences.getInstance());
+                    await prefs.setUserStreak(tempStreak);
+                    await prefs.setSnoozeTokens(tempTokens);
                     setState(() { streakCount = tempStreak; snoozeTokens = tempTokens; });
                     if(context.mounted) Navigator.pop(context);
                   },
@@ -920,7 +921,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ).then((value) async {
        if (value == 'SAVE') {
           final dateTime = _calculateAlarmDateTime(tempTime, tempDays);
-          final prefs = await SharedPreferences.getInstance();
+          final prefs = PrefsService(await SharedPreferences.getInstance());
 
           final newAlarm = AlarmEntity(
             id: await nextAlarmId(prefs),
@@ -1012,18 +1013,18 @@ class _HomeScreenState extends State<HomeScreen> {
         _showSnack(AppStrings.get('item_exists', currentLang));
         return;
       }
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = PrefsService(await SharedPreferences.getInstance());
       setState(() => savedBarcodes.add(result));
-      await prefs.setStringList('target_barcodes', savedBarcodes);
-      
+      await prefs.setTargetBarcodes(savedBarcodes);
+
       if (mounted) _showSnack(AppStrings.get('item_added', currentLang));
     }
   }
 
   Future<void> _removeBarcode(int index) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = PrefsService(await SharedPreferences.getInstance());
     setState(() => savedBarcodes.removeAt(index));
-    await prefs.setStringList('target_barcodes', savedBarcodes);
+    await prefs.setTargetBarcodes(savedBarcodes);
   }
 
   void _showSnack(String msg) {
@@ -1362,8 +1363,8 @@ class _RingScreenState extends State<RingScreen> {
   }
 
   void _handleEmergencyStop() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_ringing', false);
+    final prefs = PrefsService(await SharedPreferences.getInstance());
+    await prefs.setRinging(false);
 
     setState(() => isLocked = true);
     await Alarm.stop(widget.alarmId);
@@ -1388,13 +1389,13 @@ class _RingScreenState extends State<RingScreen> {
     await Alarm.stop(widget.alarmId); 
     HapticFeedback.heavyImpact();
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_ringing', false);
+    final prefs = PrefsService(await SharedPreferences.getInstance());
+    await prefs.setRinging(false);
 
     String today = DateTime.now().toString().split(' ')[0];
-    String? lastScan = prefs.getString('last_scan_date');
-    int currentStreak = prefs.getInt('user_streak') ?? 0;
-    int currentTokens = prefs.getInt('snooze_tokens') ?? 0;
+    String? lastScan = prefs.lastScanDate;
+    int currentStreak = prefs.userStreak;
+    int currentTokens = prefs.snoozeTokens;
 
     // FIX-04 / D-02,D-03,D-04: a day counts only for a REAL wake alarm not yet
     // counted today. Test and snooze re-arms never earn streak; a second scan
@@ -1402,13 +1403,13 @@ class _RingScreenState extends State<RingScreen> {
     // guard). Snooze stays streak-neutral here AND on its re-arm path.
     if (streakEligible(widget.alarmKind, lastScan, today)) {
         currentStreak++;
-        await prefs.setInt('user_streak', currentStreak);
-        await prefs.setString('last_scan_date', today);
+        await prefs.setUserStreak(currentStreak);
+        await prefs.setLastScanDate(today);
 
         bool tokenEarned = false;
         if (currentStreak % 3 == 0 && currentTokens < 3) {
            currentTokens++;
-           await prefs.setInt('snooze_tokens', currentTokens);
+           await prefs.setSnoozeTokens(currentTokens);
            tokenEarned = true;
         }
 
