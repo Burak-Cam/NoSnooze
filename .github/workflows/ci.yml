@@ -1,0 +1,21 @@
+# CI for the NoSnooze (uyan) Flutter app.
+# Lives in the uyan/ repo (origin github.com/Burak-Cam/NoSnooze). The outer
+# AlarmApp/ repo and .planning/ are NOT part of this repo and never trigger CI.
+# The repo root IS the Flutter project, so no working-directory is needed.
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.35.0 # matches lockfile floor; or pin a 3.35.x patch
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --fatal-warnings
+      - run: flutter test
