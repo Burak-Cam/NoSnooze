@@ -13,6 +13,10 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   alarm: ^5.1.0
+  # Imported directly in lib/main.dart for FGBG (foreground/background) escape
+  # detection. Already resolved transitively via `alarm` at 0.7.1; declared
+  # directly so flutter_lints 5.x `depend_on_referenced_packages` passes.
+  flutter_fgbg: ^0.7.1
   file_picker: ^8.0.0  # <-- BURAYI DEĞİŞTİR (6.1.1 yerine 8.0.0 yap)
   mobile_scanner: ^5.2.3
   permission_handler: ^11.3.1
