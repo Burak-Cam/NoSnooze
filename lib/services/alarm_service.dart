@@ -34,8 +34,16 @@ class AlarmGateway {
   /// FALSE-POSITIVE (granted when it is not). In the worst case the gate behaves
   /// as if no check existed (i.e. exactly the prior behavior) — NOT a
   /// regression. Real-device confirmation happens at the Task 3 checkpoint.
-  Future<bool> canScheduleExact() =>
-      Permission.scheduleExactAlarm.status.then((s) => s.isGranted);
+  Future<bool> canScheduleExact() async {
+    try {
+      return (await Permission.scheduleExactAlarm.status).isGranted;
+    } catch (_) {
+      // WR-03: a platform-channel failure must not reject the schedule Future
+      // (callers don't catch it). Fail SAFE — treat as not-granted so the UI
+      // shows the redirect dialog instead of an optimistic silent set.
+      return false;
+    }
+  }
 }
 
 /// Default production gateway. Reused so every non-test call site keeps the
