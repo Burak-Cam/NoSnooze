@@ -1,4 +1,4 @@
-package com.example.uyan
+package com.burakcam.uyan
 
 import io.flutter.embedding.android.FlutterActivity
 
