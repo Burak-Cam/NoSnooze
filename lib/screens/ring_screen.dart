@@ -62,11 +62,26 @@ class _RingScreenState extends State<RingScreen> {
   }
 
   void _initController() {
+    // Detection-reliability config tuned for dense real-product EAN-13 codes on
+    // low-end / MIUI devices, where ML Kit can take many seconds to land its
+    // first decode (Redmi Note 9S field report):
+    // - DetectionSpeed.normal + a short detectionTimeoutMs (100ms) lets ML Kit
+    //   retry decoding ~10x/sec instead of suppressing repeated attempts as
+    //   DetectionSpeed.noDuplicates does. The isLocked guard in _onScanSuccess
+    //   makes any repeated emission of the same barcode harmless.
+    // - cameraResolution 1920x1080 (vs the 640x480 Android default) gives ML Kit
+    //   far more pixels-per-bar, which dense 1D barcodes need to decode quickly.
+    // NOTE: formats are intentionally left at the default (all formats). The
+    // add-barcode flow (ScannerScreen) stores ANY scanned format verbatim, so
+    // restricting formats here could permanently trap a user who saved a non
+    // EAN-13 code — a core-value ("must be able to dismiss") violation.
     controller = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates, 
+      detectionSpeed: DetectionSpeed.normal,
+      detectionTimeoutMs: 100,
+      cameraResolution: const Size(1920, 1080),
       returnImage: false,
       torchEnabled: false,
-      autoStart: true, 
+      autoStart: true,
     );
   }
 
@@ -190,6 +205,21 @@ class _RingScreenState extends State<RingScreen> {
             if (isCameraReady && controller != null)
               MobileScanner(
                 controller: controller!,
+                // If the camera pipeline fails, show a clear message and a torch
+                // hint instead of a silent black screen — the user still has the
+                // 60s emergency-stop fallback, but should know scanning is down.
+                errorBuilder: (context, error, child) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        AppStrings.get('scan_instructions', widget.language),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white, fontSize: 20),
+                      ),
+                    ),
+                  );
+                },
                 onDetect: (capture) {
                   final List<Barcode> barcodes = capture.barcodes;
                   for (final barcode in barcodes) {

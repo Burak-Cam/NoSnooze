@@ -12,9 +12,17 @@ class ScannerScreen extends StatefulWidget {
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
+  // Same detection-reliability config as RingScreen: dense real-product EAN-13
+  // codes decode slowly at the 640x480 default on low-end / MIUI devices.
+  // DetectionSpeed.normal (with a short timeout) retries decoding frequently and
+  // 1080p gives ML Kit more pixels-per-bar. The isScanCompleted guard makes any
+  // repeated emission harmless. Return contract (barcodes.first.rawValue) is
+  // unchanged.
   final MobileScannerController controller = MobileScannerController(
     torchEnabled: false,
-    detectionSpeed: DetectionSpeed.noDuplicates,
+    detectionSpeed: DetectionSpeed.normal,
+    detectionTimeoutMs: 100,
+    cameraResolution: const Size(1920, 1080),
   );
   bool isScanCompleted = false;
 
