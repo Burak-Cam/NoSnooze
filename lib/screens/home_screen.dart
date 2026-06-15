@@ -72,8 +72,17 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _checkCheatStatus();
-    _initializeRest();
+    _bootstrap();
+  }
+
+  // WR-02: sequence cold-start init. _checkCheatStatus and _startAlarmListener
+  // both read/write the same is_ringing / escape_detected prefs keys; running
+  // them concurrently (the old fire-and-forget pair) let a fresh-ring write race
+  // a genuine escape verdict. Finish the cheat verdict BEFORE the listener can
+  // overwrite those flags.
+  Future<void> _bootstrap() async {
+    await _checkCheatStatus();
+    await _initializeRest();
   }
 
   Future<void> _initializeRest() async {
@@ -97,10 +106,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startEscapeWatch() async {
     await _fgbgSubscription?.cancel();
     _fgbgSubscription = FGBGEvents.instance.stream.listen((event) async {
-      if (event == FGBGType.background) {
-        final prefs = PrefsService(await SharedPreferences.getInstance());
-        await prefs.setEscapeDetected(true);
-      }
+      if (event != FGBGType.background) return;
+      final prefs = PrefsService(await SharedPreferences.getInstance());
+      // WR-06: a background event already queued when the subscription is
+      // cancelled (dismiss/dispose) could otherwise flip escape_detected after
+      // teardown and poison the next cold-start cheat verdict. Skip the write if
+      // the State is gone.
+      if (!mounted) return;
+      await prefs.setEscapeDetected(true);
     });
   }
 
@@ -117,11 +130,16 @@ class _HomeScreenState extends State<HomeScreen> {
   /// never a transient `% N` id, so `Alarm.set` replaces the same occurrence
   /// instead of double-scheduling. Canonical analog: the old inline SUCCESS
   /// re-arm. Type is AlarmKind.real (a repeating wake alarm is always real).
-  Future<void> _rearmIfRepeating(int index) async {
-    if (index == -1) return;
-    if (alarms[index].repeatDays.isEmpty) return;
+  /// CR-02: returns whether the re-arm actually scheduled. A no-op (one-shot /
+  /// unknown index) returns true. When `scheduleAlarmFn` returns false the
+  /// exact-alarm permission was revoked mid-ring, so a REPEATING alarm would
+  /// silently never re-arm — the caller surfaces the redirect dialog instead of
+  /// dropping it on the floor (FIX-01's guarantee was being lost).
+  Future<bool> _rearmIfRepeating(int index) async {
+    if (index == -1) return true;
+    if (alarms[index].repeatDays.isEmpty) return true;
     final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
-    await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
+    return scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
   }
 
   void _startAlarmListener() {
@@ -215,14 +233,21 @@ class _HomeScreenState extends State<HomeScreen> {
         // the four variants from RingScreen). Re-arm (FIX-01) stays on every path.
         switch (result) {
           case RingResult.restart:
+           // WR-01: clear the ringing flag like the other dismiss paths (was
+           // omitted here); the restart fire below makes the listener set it
+           // true again, so this avoids a stale is_ringing on an OEM-kill.
+           await prefs.setRinging(false);
            await Alarm.stop(alarmSettings.id);
            // RLS-05 / D-07: safe-side 2.5s cooldown before re-firing so the
            // camera/vibration stack settles (avoids camera-busy on restart).
            await Future.delayed(const Duration(milliseconds: kCameraRestartCooldownMs));
-           await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real);
+           final restarted = await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real);
            // FIX-01: the transient restart fire above is a one-off; a REPEATING
            // alarm must still keep its next scheduled occurrence (stable id).
-           await _rearmIfRepeating(index);
+           final restartRearmed = await _rearmIfRepeating(index);
+           // CR-02: if exact-alarm permission was revoked mid-ring, the restart
+           // (and/or the repeating re-arm) silently failed — surface it.
+           if ((!restarted || !restartRearmed) && mounted) await _showExactAlarmDialog();
             break;
           case RingResult.snooze:
            await prefs.setRinging(false);
@@ -233,7 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
            await prefs.setSnoozeTokens(newTokens);
 
            // 5-min transient snooze alarm (separate, transient id).
-           await scheduleAlarmFn(
+           final snoozed = await scheduleAlarmFn(
              await nextAlarmId(prefs),
              DateTime.now().add(const Duration(minutes: 5)),
              true,
@@ -244,16 +269,26 @@ class _HomeScreenState extends State<HomeScreen> {
            );
            // FIX-01: the snooze above is transient; the REPEATING entity must
            // also be re-armed to its next occurrence (stable id) so it survives.
-           await _rearmIfRepeating(index);
+           final snoozeRearmed = await _rearmIfRepeating(index);
 
            setState(() => snoozeTokens = newTokens);
-           _showSnack(AppStrings.get('snooze_used', currentLang));
+           // CR-02: only claim the snooze succeeded when it was actually
+           // scheduled; otherwise tell the user the exact-alarm permission is
+           // missing instead of a misleading "snooze used" message.
+           if ((!snoozed || !snoozeRearmed) && mounted) {
+             await _showExactAlarmDialog();
+           } else {
+             _showSnack(AppStrings.get('snooze_used', currentLang));
+           }
             break;
           case RingResult.success:
            await prefs.setRinging(false);
 
            // FIX-01: re-arm the repeating alarm to its next occurrence.
-           await _rearmIfRepeating(index);
+           final successRearmed = await _rearmIfRepeating(index);
+           // CR-02: a revoked exact-alarm permission would drop the repeating
+           // alarm silently — surface it so the user can re-grant.
+           if (!successRearmed && mounted) await _showExactAlarmDialog();
 
            _loadPreferences();
             break;
@@ -261,7 +296,8 @@ class _HomeScreenState extends State<HomeScreen> {
            // FIX-01: emergency stop halts the current fire, but a REPEATING
            // alarm must still keep its next occurrence (no silent loss).
            await prefs.setRinging(false);
-           await _rearmIfRepeating(index);
+           final emergencyRearmed = await _rearmIfRepeating(index);
+           if (!emergencyRearmed && mounted) await _showExactAlarmDialog();
             break;
           default:
             // Non-RingResult / null pop (no dismiss action). Re-arm paths above
@@ -849,10 +885,17 @@ class _HomeScreenState extends State<HomeScreen> {
        // (T-03-10 — no leaked Alarm.set; single funnel / D-03).
        await Alarm.stop(editing.id);
        final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(editing.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real));
-       // If permission was missing (ok == false) the dialog was already shown by
-       // the helper; the entity edit is intentionally NOT rolled back (the user
-       // changed the time) — toggling the alarm again will re-attempt the arm.
-       if (ok && mounted) _showRemainingTime(dateTime);
+       if (!ok) {
+         // CR-01: the old schedule was already stopped and the new one was NOT
+         // set (exact-alarm permission missing — the helper already showed the
+         // redirect dialog). Flip the visible state to OFF so the user never
+         // sees an "active" alarm that the OS will never fire (core-value
+         // breach). Re-enabling the Switch re-attempts the arm via _toggleAlarm.
+         if (mounted) setState(() => alarms[idx].isActive = false);
+         _saveAlarms();
+         return;
+       }
+       if (mounted) _showRemainingTime(dateTime);
     });
   }
 
