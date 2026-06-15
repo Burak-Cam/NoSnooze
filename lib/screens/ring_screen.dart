@@ -43,6 +43,15 @@ class _RingScreenState extends State<RingScreen> {
   bool _showEmergencyButton = false;
   Timer? _emergencyTimer;
 
+  // Auto-retry bookkeeping. A stuck black RingScreen camera = the user cannot
+  // scan to dismiss the alarm = core-value failure. If the camera fails to
+  // acquire (e.g. the user just used another camera app, or a release race on a
+  // single-camera MIUI device), self-heal by restarting the controller a few
+  // times before falling back to the user-facing message + 60s emergency stop.
+  int _retryCount = 0;
+  static const int _maxRetries = 5;
+  Timer? _retryTimer;
+
   @override
   void initState() {
     super.initState();
@@ -62,12 +71,51 @@ class _RingScreenState extends State<RingScreen> {
   }
 
   void _initController() {
+    // Detection-reliability config tuned for dense real-product EAN-13 codes on
+    // low-end / MIUI devices, where ML Kit can take many seconds to land its
+    // first decode (Redmi Note 9S field report):
+    // - DetectionSpeed.normal + a short detectionTimeoutMs (100ms) lets ML Kit
+    //   retry decoding ~10x/sec instead of suppressing repeated attempts as
+    //   DetectionSpeed.noDuplicates does. The isLocked guard in _onScanSuccess
+    //   makes any repeated emission of the same barcode harmless.
+    // - cameraResolution 1920x1080 (vs the 640x480 Android default) gives ML Kit
+    //   far more pixels-per-bar, which dense 1D barcodes need to decode quickly.
+    // NOTE: formats are intentionally left at the default (all formats). The
+    // add-barcode flow (ScannerScreen) stores ANY scanned format verbatim, so
+    // restricting formats here could permanently trap a user who saved a non
+    // EAN-13 code — a core-value ("must be able to dismiss") violation.
     controller = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates, 
+      detectionSpeed: DetectionSpeed.normal,
+      detectionTimeoutMs: 100,
+      cameraResolution: const Size(1920, 1080),
       returnImage: false,
       torchEnabled: false,
-      autoStart: true, 
+      autoStart: true,
     );
+  }
+
+  // Self-heal a transient camera-acquire failure on the dismiss path. Retries
+  // more times than ScannerScreen (5 vs 3) because being unable to dismiss the
+  // alarm is the worst-case core-value failure; the 60s emergency-stop button is
+  // the final backstop if every retry fails.
+  void _scheduleAutoRetry() {
+    if (_retryCount >= _maxRetries) return;
+    if (_retryTimer?.isActive ?? false) return;
+    _retryCount++;
+    _retryTimer = Timer(Duration(milliseconds: 400 * _retryCount), () async {
+      if (!mounted || controller == null) return;
+      try {
+        await controller!.stop();
+      } catch (_) {
+        // ignore — controller may already be stopped
+      }
+      if (!mounted || controller == null) return;
+      try {
+        await controller!.start();
+      } catch (_) {
+        // a failed start surfaces again via errorBuilder, which re-schedules
+      }
+    });
   }
 
   void _requestRestart() {
@@ -175,6 +223,7 @@ class _RingScreenState extends State<RingScreen> {
   @override
   void dispose() {
     _emergencyTimer?.cancel();
+    _retryTimer?.cancel();
     controller?.dispose();
     super.dispose();
   }
@@ -190,6 +239,23 @@ class _RingScreenState extends State<RingScreen> {
             if (isCameraReady && controller != null)
               MobileScanner(
                 controller: controller!,
+                // If the camera pipeline fails, auto-retry acquiring it (a stuck
+                // camera here means the user cannot dismiss the alarm) and show a
+                // clear message instead of a silent black screen. The user still
+                // has the 60s emergency-stop fallback if every retry fails.
+                errorBuilder: (context, error, child) {
+                  _scheduleAutoRetry();
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        AppStrings.get('scan_instructions', widget.language),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white, fontSize: 20),
+                      ),
+                    ),
+                  );
+                },
                 onDetect: (capture) {
                   final List<Barcode> barcodes = capture.barcodes;
                   for (final barcode in barcodes) {

@@ -17,6 +17,8 @@ class AppStrings {
     'camera_fix_btn': {'tr': 'KAMERA ODAKLAMIYOR MU?\nTİTREŞİMİ KES', 'en': 'CAMERA BLURRY?\nCUT VIBRATION'},
     'scan_title': {'tr': 'Ürün Tara', 'en': 'Scan Item'},
     'flash_hint': {'tr': 'Karanlıktaysa flaşı aç 👆', 'en': 'Turn on flash if dark 👆'},
+    'camera_starting': {'tr': 'Kamera başlatılıyor...', 'en': 'Starting camera...'},
+    'camera_retry': {'tr': 'Kamera açılamadı. Tekrar denemek için dokun.', 'en': 'Camera failed to open. Tap to retry.'},
     'item_exists': {'tr': 'Bu ürün zaten ekli!', 'en': 'Item already exists!'},
     'item_added': {'tr': 'Ürün Eklendi! ✅', 'en': 'Item Added! ✅'},
     'add_item_first': {'tr': 'Önce barkod ekle!', 'en': 'Add an item first!'},
