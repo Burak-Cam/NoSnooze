@@ -43,6 +43,15 @@ class _RingScreenState extends State<RingScreen> {
   bool _showEmergencyButton = false;
   Timer? _emergencyTimer;
 
+  // Auto-retry bookkeeping. A stuck black RingScreen camera = the user cannot
+  // scan to dismiss the alarm = core-value failure. If the camera fails to
+  // acquire (e.g. the user just used another camera app, or a release race on a
+  // single-camera MIUI device), self-heal by restarting the controller a few
+  // times before falling back to the user-facing message + 60s emergency stop.
+  int _retryCount = 0;
+  static const int _maxRetries = 5;
+  Timer? _retryTimer;
+
   @override
   void initState() {
     super.initState();
@@ -83,6 +92,30 @@ class _RingScreenState extends State<RingScreen> {
       torchEnabled: false,
       autoStart: true,
     );
+  }
+
+  // Self-heal a transient camera-acquire failure on the dismiss path. Retries
+  // more times than ScannerScreen (5 vs 3) because being unable to dismiss the
+  // alarm is the worst-case core-value failure; the 60s emergency-stop button is
+  // the final backstop if every retry fails.
+  void _scheduleAutoRetry() {
+    if (_retryCount >= _maxRetries) return;
+    if (_retryTimer?.isActive ?? false) return;
+    _retryCount++;
+    _retryTimer = Timer(Duration(milliseconds: 400 * _retryCount), () async {
+      if (!mounted || controller == null) return;
+      try {
+        await controller!.stop();
+      } catch (_) {
+        // ignore — controller may already be stopped
+      }
+      if (!mounted || controller == null) return;
+      try {
+        await controller!.start();
+      } catch (_) {
+        // a failed start surfaces again via errorBuilder, which re-schedules
+      }
+    });
   }
 
   void _requestRestart() {
@@ -190,6 +223,7 @@ class _RingScreenState extends State<RingScreen> {
   @override
   void dispose() {
     _emergencyTimer?.cancel();
+    _retryTimer?.cancel();
     controller?.dispose();
     super.dispose();
   }
@@ -205,10 +239,12 @@ class _RingScreenState extends State<RingScreen> {
             if (isCameraReady && controller != null)
               MobileScanner(
                 controller: controller!,
-                // If the camera pipeline fails, show a clear message and a torch
-                // hint instead of a silent black screen — the user still has the
-                // 60s emergency-stop fallback, but should know scanning is down.
+                // If the camera pipeline fails, auto-retry acquiring it (a stuck
+                // camera here means the user cannot dismiss the alarm) and show a
+                // clear message instead of a silent black screen. The user still
+                // has the 60s emergency-stop fallback if every retry fails.
                 errorBuilder: (context, error, child) {
+                  _scheduleAutoRetry();
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
