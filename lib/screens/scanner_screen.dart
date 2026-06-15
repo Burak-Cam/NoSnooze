@@ -27,6 +27,17 @@ class _ScannerScreenState extends State<ScannerScreen> {
   bool isScanCompleted = false;
 
   @override
+  void dispose() {
+    // MIUI/Redmi allows only one open camera at a time (logcat:
+    // "Open count: 1 (Max allowed: 1)"). Without releasing the controller the
+    // camera stays held after this screen pops, so reopening the scanner (e.g.
+    // to add a 3rd barcode) fails to acquire it and shows a blank preview.
+    // Mirror ring_screen.dart's lifecycle and free the camera here.
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(AppStrings.get('scan_title', widget.language)), backgroundColor: Colors.black, actions: [
