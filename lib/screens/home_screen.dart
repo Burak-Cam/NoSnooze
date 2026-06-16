@@ -702,9 +702,25 @@ class _HomeScreenState extends State<HomeScreen> {
                               }()
                             : DateTime.now(),
                         onDateTimeChanged: (DateTime newDateTime) {
-                           tempTime = TimeOfDay.fromDateTime(newDateTime);
+                           setModalState(() {
+                             tempTime = TimeOfDay.fromDateTime(newDateTime);
+                           });
                         },
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Live "remaining time" label — rebuilt by StatefulBuilder
+                  // whenever tempTime (time picker) or tempDays (repeat menu)
+                  // change, so the user sees how far away the alarm is BEFORE
+                  // saving. Pure _remainingText needs no `mounted` guard.
+                  Text(
+                    _remainingText(_calculateAlarmDateTime(tempTime, tempDays)),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
                     ),
                   ),
                   const Divider(),
