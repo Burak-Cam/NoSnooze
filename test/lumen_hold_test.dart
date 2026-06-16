@@ -57,8 +57,8 @@ void main() {
   });
 
   group('constant values pinned (calibration regression guard)', () {
-    test('kLumenThreshold is 180 (avg-Y 0..255)', () {
-      expect(kLumenThreshold, 180);
+    test('kLumenThreshold is 140 (avg-Y 0..255, exposure-locked calibration)', () {
+      expect(kLumenThreshold, 140);
     });
     test('kLumenHoldMs is 2500 (~2.5s sustained)', () {
       expect(kLumenHoldMs, 2500);

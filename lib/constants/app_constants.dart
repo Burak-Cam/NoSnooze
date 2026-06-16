@@ -9,10 +9,13 @@ const int kMaxBarcodes = 3;
 
 /// MIS-01 / D-03: the average-luminance threshold (avg-Y on a 0..255 scale)
 /// a camera frame must reach to count as "bright enough" for the Lümen
-/// mission. [ASSUMED] starting value — device-calibrated on a real device in
-/// Plan 03 (Redmi Note 9S auto-exposure compresses bright scenes). Pinned by
-/// lumen_hold_test.dart so a regression to a different value is caught.
-const double kLumenThreshold = 180;
+/// mission. Device-calibrated on the Redmi Note 9S (Plan 03 checkpoint): with
+/// AUTO-exposure the frame average is pinned to ~mid-gray (~110) no matter how
+/// bright the scene, so LumenMission now LOCKS exposure (see lumen_mission.dart)
+/// to make the average track real brightness. With exposure locked, 140 sits
+/// above the locked ambient baseline so the user must point at a genuinely
+/// bright light. Pinned by lumen_hold_test.dart so a regression is caught.
+const double kLumenThreshold = 140;
 
 /// MIS-01 / D-02: how long (ms) average luminance must be SUSTAINED at/above
 /// [kLumenThreshold] to complete the Lümen mission (~2-3s sustained, NOT

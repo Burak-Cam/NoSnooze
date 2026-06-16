@@ -68,16 +68,25 @@ class _LumenViewState extends State<_LumenView> with WidgetsBindingObserver {
   // Auto-retry backoff for transient camera-acquire failures (release race on
   // the single-camera device). Mirrors scanner_screen lines 63-81.
   int _retryCount = 0;
-  static const int _maxRetries = 3;
+  static const int _maxRetries = 6;
   Timer? _retryTimer;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // The prior screen's mobile_scanner releases the single MIUI camera
+    // ASYNCHRONOUSLY on dispose; opening our controller too soon races that
+    // teardown and fails to acquire (device symptom: the mission stays on
+    // "Starting Camera...", especially when fired over the lock screen). Wait a
+    // beat after the first frame before the first acquire; the backoff retry
+    // (now up to 6 attempts) self-heals any remaining race.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _initCamera();
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (!mounted) return;
+        _initCamera();
+      });
     });
   }
 
@@ -101,6 +110,25 @@ class _LumenViewState extends State<_LumenView> with WidgetsBindingObserver {
         enableAudio: false,
       );
       await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      // CRITICAL (device-confirmed on Redmi Note 9S): with AUTO-exposure the
+      // camera normalizes the FRAME AVERAGE to ~mid-gray (~110) no matter how
+      // bright the scene — so avg-luma can never reach a high threshold (the bulb
+      // test capped at ~110). Lock exposure (and focus) right after init so the
+      // average actually tracks scene brightness: ambient stays low, a real
+      // bright light pushes it well up. Best-effort — unsupported modes just
+      // throw and we fall back to auto (still usable with the calibrated low
+      // threshold). Lock is taken at the ambient pickup scene, so pointing at a
+      // bright light then exceeds the baseline.
+      try {
+        await controller.setExposureMode(ExposureMode.locked);
+      } catch (_) {}
+      try {
+        await controller.setFocusMode(FocusMode.locked);
+      } catch (_) {}
       if (!mounted) {
         await controller.dispose();
         return;
