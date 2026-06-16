@@ -944,16 +944,24 @@ class _HomeScreenState extends State<HomeScreen> {
     _saveAlarms();
   }
 
-  void _showRemainingTime(DateTime target) {
+  // Pure helper: build the human-readable "rings in ..." string for a target
+  // DateTime. Uses DateTime.now() only (no `mounted`/BuildContext needed), so it
+  // is safe to call during widget builds (e.g. the live modal label). Single
+  // source of truth — _showRemainingTime delegates here (DRY).
+  String _remainingText(DateTime target) {
     final now = DateTime.now();
     final difference = target.difference(now);
     final days = difference.inDays;
     final hours = difference.inHours % 24;
     final minutes = difference.inMinutes % 60;
-    
-    String msg = currentLang == 'tr' 
-      ? "${days > 0 ? "$days gün " : ""}${hours > 0 ? "$hours saat " : ""}$minutes dakika sonra çalacak." 
-      : "${days > 0 ? "$days days " : ""}${hours > 0 ? "$hours hours " : ""}$minutes minutes.";
+
+    return currentLang == 'tr'
+      ? "${days > 0 ? "$days gün " : ""}${hours > 0 ? "$hours saat " : ""}$minutes dakika sonra çalacak."
+      : "Rings in ${days > 0 ? "$days days " : ""}${hours > 0 ? "$hours hours " : ""}$minutes minutes.";
+  }
+
+  void _showRemainingTime(DateTime target) {
+    final msg = _remainingText(target);
 
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
