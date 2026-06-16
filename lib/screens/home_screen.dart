@@ -180,6 +180,12 @@ class _HomeScreenState extends State<HomeScreen> {
       // legacy alarm scheduled before this change has no payload (null/empty)
       // and is treated as AlarmKind.real — back-compat, never crashes.
       AlarmKind firedKind = AlarmKind.real;
+      // ENG-03 / MIS-01 / D-11: decode the dismissal mission from the SAME
+      // payload. Default none (legacy alarms, missing/corrupt payload). Decoded
+      // with `asNameMap()[x] ?? none` (NOT byName — Pitfall 5): an unknown/typo/
+      // future mission name (e.g. 'water' from a newer build) falls to none and
+      // NEVER throws, so the dismiss path can always proceed (core value).
+      MissionType firedMission = MissionType.none;
       final rawPayload = alarmSettings.payload;
       if (rawPayload != null && rawPayload.isNotEmpty) {
         try {
@@ -187,9 +193,13 @@ class _HomeScreenState extends State<HomeScreen> {
           if (decodedPayload is Map && decodedPayload['kind'] is String) {
             firedKind = AlarmKind.values.byName(decodedPayload['kind'] as String);
           }
+          if (decodedPayload is Map && decodedPayload['mission'] is String) {
+            firedMission = MissionType.values.asNameMap()[decodedPayload['mission'] as String] ?? MissionType.none;
+          }
         } catch (_) {
-          // Corrupt/unknown payload => safe default (real). Never crash on dismiss.
+          // Corrupt/unknown payload => safe defaults. Never crash on dismiss.
           firedKind = AlarmKind.real;
+          firedMission = MissionType.none;
         }
       }
 
@@ -225,6 +235,11 @@ class _HomeScreenState extends State<HomeScreen> {
               availableTokens: snoozeTokens,
               label: index != -1 ? alarms[index].label : '',
               alarmKind: firedKind,
+              // ENG-01 / MIS-01: the decoded mission + the alarm's ringtone (for
+              // the Stage-2 soft loop). RingResult switch below is UNCHANGED — a
+              // mission success returns RingResult.success (re-armed at :289).
+              missionType: firedMission,
+              ringtonePath: widget.currentRingtone,
             ),
           ),
         );
