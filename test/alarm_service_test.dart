@@ -9,6 +9,14 @@ import 'package:no_snooze/services/alarm_service.dart';
 // [AlarmGateway] seam. We assert (a) calculateAlarmDateTime invariants survive
 // the move, and (b) scheduleAlarmFn funnels through the gateway exactly once
 // with a DateTime equal to calculateAlarmDateTime's next occurrence.
+//
+// UX-01 (quick-hb1, deliberate D-02 reversal): the HomeScreen edit branch no
+// longer early-returns for a passive (Switch off) alarm. Editing a passive
+// alarm and tapping SAVE now auto-activates it and re-arms it through the SAME
+// scheduleAlarmFn funnel exercised here — so the funnel behavior asserted by
+// the TST-02 seam below already covers the passive→active edit path. The edit
+// branch itself is a widget setState method with no extractable seam, so there
+// is (intentionally) no characterization test for it here.
 
 class MockAlarmGateway extends Mock implements AlarmGateway {}
 
@@ -72,10 +80,13 @@ void main() {
       gateway = MockAlarmGateway();
       when(() => gateway.set(any())).thenAnswer((_) async {});
       when(() => gateway.stop(any())).thenAnswer((_) async {});
+      // RLS-04 / D-03: the existing TST-02 cases assume exact-alarm permission
+      // is granted (the funnel gate passes -> set is called once, returns true).
+      when(() => gateway.canScheduleExact()).thenAnswer((_) async => true);
     });
 
     test('calls gateway.set exactly once', () async {
-      await scheduleAlarmFn(
+      final result = await scheduleAlarmFn(
         7,
         DateTime(2030, 1, 1, 6, 0),
         true,
@@ -86,6 +97,48 @@ void main() {
         gateway: gateway,
       );
       verify(() => gateway.set(any())).called(1);
+      expect(result, isTrue);
+    });
+
+    // RLS-04 / D-03 (gate, permission DENIED): exact-alarm permission missing =>
+    // gateway.set is NEVER called and the funnel returns false. This is the
+    // single point that protects all 6 call paths from a silent inexact set.
+    test('gate: canScheduleExact=false => set NOT called and returns false',
+        () async {
+      when(() => gateway.canScheduleExact()).thenAnswer((_) async => false);
+      final result = await scheduleAlarmFn(
+        7,
+        DateTime(2030, 1, 1, 6, 0),
+        true,
+        'en',
+        'assets/sounds/alarm1.mp3',
+        'Wake',
+        AlarmKind.real,
+        gateway: gateway,
+      );
+      // Equivalent to verify(...).called(0): the funnel must NOT set the alarm
+      // when the exact-alarm permission is missing.
+      verifyNever(() => gateway.set(any()));
+      expect(result, isFalse);
+    });
+
+    // RLS-04 / D-03 (gate, permission GRANTED): explicit override mirroring the
+    // denied case — permission present => set called once and funnel returns true.
+    test('gate: canScheduleExact=true => set called once and returns true',
+        () async {
+      when(() => gateway.canScheduleExact()).thenAnswer((_) async => true);
+      final result = await scheduleAlarmFn(
+        7,
+        DateTime(2030, 1, 1, 6, 0),
+        true,
+        'en',
+        'assets/sounds/alarm1.mp3',
+        'Wake',
+        AlarmKind.real,
+        gateway: gateway,
+      );
+      verify(() => gateway.set(any())).called(1);
+      expect(result, isTrue);
     });
 
     test('schedules the DateTime returned by calculateAlarmDateTime', () async {

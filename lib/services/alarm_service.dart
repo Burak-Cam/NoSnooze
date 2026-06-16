@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:alarm/alarm.dart';
 import 'package:flutter/material.dart' show TimeOfDay;
+import 'package:permission_handler/permission_handler.dart';
 
 import '../l10n/app_strings.dart';
 import '../models/alarm_entity.dart';
@@ -20,6 +21,29 @@ class AlarmGateway {
       Alarm.set(alarmSettings: alarmSettings);
 
   Future<void> stop(int id) => Alarm.stop(id);
+
+  /// RLS-04 / D-03: injectable exact-alarm permission seam. Returns whether the
+  /// OS currently grants `SCHEDULE_EXACT_ALARM` (Android 14 default-DENIED; can
+  /// be revoked any time). The funnel ([scheduleAlarmFn]) consults this BEFORE
+  /// every `set`, so the gate decision is centralized and platform-channel-free
+  /// in tests: `MockAlarmGateway extends Mock implements AlarmGateway` lets a
+  /// test stub `when(() => gateway.canScheduleExact()).thenAnswer(...)` with no
+  /// package/platform-channel mocking.
+  ///
+  /// Pitfall 2 (RESEARCH): on MIUI / Android 12 this status may report a
+  /// FALSE-POSITIVE (granted when it is not). In the worst case the gate behaves
+  /// as if no check existed (i.e. exactly the prior behavior) — NOT a
+  /// regression. Real-device confirmation happens at the Task 3 checkpoint.
+  Future<bool> canScheduleExact() async {
+    try {
+      return (await Permission.scheduleExactAlarm.status).isGranted;
+    } catch (_) {
+      // WR-03: a platform-channel failure must not reject the schedule Future
+      // (callers don't catch it). Fail SAFE — treat as not-granted so the UI
+      // shows the redirect dialog instead of an optimistic silent set.
+      return false;
+    }
+  }
 }
 
 /// Default production gateway. Reused so every non-test call site keeps the
@@ -35,7 +59,17 @@ const AlarmGateway defaultAlarmGateway = AlarmGateway();
 /// FIX-04 / D-03: the alarm TYPE is carried out-of-band via the payload so the
 /// RingScreen can gate the streak (real vs test vs snooze). Legacy alarms with
 /// a null payload decode to [AlarmKind.real] (Pitfall 2).
-Future<void> scheduleAlarmFn(
+///
+/// RLS-04 / D-03 (funnel-içi exact-alarm gate): BEFORE every `gateway.set`, this
+/// funnel checks `gateway.canScheduleExact()`. If the exact-alarm permission is
+/// NOT granted, `gateway.set` is NOT called and the function returns `false`;
+/// otherwise it sets the alarm and returns `true`. Because this is the SOLE
+/// funnel for `Alarm.set`, all 6 call paths (_rearmIfRepeating, restart re-fire,
+/// snooze re-arm, test, add, toggle) are covered automatically — a silent
+/// inexact set (missed wake-up) becomes impossible. NO BuildContext is added
+/// here (Pitfall 4): the funnel only returns a bool signal; the redirect dialog
+/// lives in the UI layer (home_screen).
+Future<bool> scheduleAlarmFn(
   int id,
   DateTime dateTime,
   bool vibrate,
@@ -45,6 +79,8 @@ Future<void> scheduleAlarmFn(
   AlarmKind alarmType, {
   AlarmGateway gateway = defaultAlarmGateway,
 }) async {
+  // RLS-04 / D-03: set-öncesi gate. Permission revoked => do NOT set, signal false.
+  if (!await gateway.canScheduleExact()) return false;
   final alarmSettings = AlarmSettings(
     id: id,
     dateTime: dateTime,
@@ -67,6 +103,7 @@ Future<void> scheduleAlarmFn(
     androidFullScreenIntent: true,
   );
   await gateway.set(alarmSettings);
+  return true;
 }
 
 /// FIX-05: monotonic id step. Pure helper backing the SharedPreferences

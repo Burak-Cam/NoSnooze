@@ -68,10 +68,23 @@ class AppStrings {
     'label_title': {'tr': 'Etiket', 'en': 'Label'},
     'label_hint': {'tr': 'Alarm', 'en': 'Alarm'},
     'add_alarm_title': {'tr': 'Alarm Ekle', 'en': 'Add Alarm'},
+    // UX-01: in-place edit modal title (reuses the add modal; TR/EN parity).
+    'edit_alarm_title': {'tr': 'Alarmı Düzenle', 'en': 'Edit Alarm'},
     'btn_cancel': {'tr': 'İptal', 'en': 'Cancel'},
     'btn_save': {'tr': 'Kaydet', 'en': 'Save'},
     'inactive': {'tr': 'Pasif', 'en': 'Inactive'},
     'app_version': {'tr': 'v1.0.0 (Beta)', 'en': 'v1.0.0 (Beta)'},
+    // RLS-04 / D-03: exact-alarm permission redirect dialog (TR/EN parity).
+    'exact_alarm_title': {'tr': '⏰ İzin Gerekli', 'en': '⏰ Permission Required'},
+    'exact_alarm_desc': {
+      'tr': 'Alarmın tam zamanında ve güvenilir şekilde çalabilmesi için '
+            '"Alarm ve hatırlatıcı ayarlama" (kesin alarm) iznine ihtiyacımız var.\n\n'
+            'Bu izin olmadan alarm kurulamaz. Lütfen ayarlardan izni açın.',
+      'en': 'To ring exactly on time and reliably, the alarm needs the '
+            '"Alarms & reminders" (exact alarm) permission.\n\n'
+            'Without it the alarm cannot be set. Please enable the permission in settings.'
+    },
+    'btn_open_settings': {'tr': 'Ayarları Aç', 'en': 'Open Settings'},
   };
 
   static const Map<int, Map<String, String>> _dayShortNames = {

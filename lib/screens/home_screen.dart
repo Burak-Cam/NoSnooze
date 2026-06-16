@@ -72,8 +72,17 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _checkCheatStatus();
-    _initializeRest();
+    _bootstrap();
+  }
+
+  // WR-02: sequence cold-start init. _checkCheatStatus and _startAlarmListener
+  // both read/write the same is_ringing / escape_detected prefs keys; running
+  // them concurrently (the old fire-and-forget pair) let a fresh-ring write race
+  // a genuine escape verdict. Finish the cheat verdict BEFORE the listener can
+  // overwrite those flags.
+  Future<void> _bootstrap() async {
+    await _checkCheatStatus();
+    await _initializeRest();
   }
 
   Future<void> _initializeRest() async {
@@ -97,10 +106,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startEscapeWatch() async {
     await _fgbgSubscription?.cancel();
     _fgbgSubscription = FGBGEvents.instance.stream.listen((event) async {
-      if (event == FGBGType.background) {
-        final prefs = PrefsService(await SharedPreferences.getInstance());
-        await prefs.setEscapeDetected(true);
-      }
+      if (event != FGBGType.background) return;
+      final prefs = PrefsService(await SharedPreferences.getInstance());
+      // WR-06: a background event already queued when the subscription is
+      // cancelled (dismiss/dispose) could otherwise flip escape_detected after
+      // teardown and poison the next cold-start cheat verdict. Skip the write if
+      // the State is gone.
+      if (!mounted) return;
+      await prefs.setEscapeDetected(true);
     });
   }
 
@@ -117,11 +130,16 @@ class _HomeScreenState extends State<HomeScreen> {
   /// never a transient `% N` id, so `Alarm.set` replaces the same occurrence
   /// instead of double-scheduling. Canonical analog: the old inline SUCCESS
   /// re-arm. Type is AlarmKind.real (a repeating wake alarm is always real).
-  Future<void> _rearmIfRepeating(int index) async {
-    if (index == -1) return;
-    if (alarms[index].repeatDays.isEmpty) return;
+  /// CR-02: returns whether the re-arm actually scheduled. A no-op (one-shot /
+  /// unknown index) returns true. When `scheduleAlarmFn` returns false the
+  /// exact-alarm permission was revoked mid-ring, so a REPEATING alarm would
+  /// silently never re-arm — the caller surfaces the redirect dialog instead of
+  /// dropping it on the floor (FIX-01's guarantee was being lost).
+  Future<bool> _rearmIfRepeating(int index) async {
+    if (index == -1) return true;
+    if (alarms[index].repeatDays.isEmpty) return true;
     final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
-    await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
+    return scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
   }
 
   void _startAlarmListener() {
@@ -215,14 +233,21 @@ class _HomeScreenState extends State<HomeScreen> {
         // the four variants from RingScreen). Re-arm (FIX-01) stays on every path.
         switch (result) {
           case RingResult.restart:
+           // WR-01: clear the ringing flag like the other dismiss paths (was
+           // omitted here); the restart fire below makes the listener set it
+           // true again, so this avoids a stale is_ringing on an OEM-kill.
+           await prefs.setRinging(false);
            await Alarm.stop(alarmSettings.id);
            // RLS-05 / D-07: safe-side 2.5s cooldown before re-firing so the
            // camera/vibration stack settles (avoids camera-busy on restart).
            await Future.delayed(const Duration(milliseconds: kCameraRestartCooldownMs));
-           await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real);
+           final restarted = await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real);
            // FIX-01: the transient restart fire above is a one-off; a REPEATING
            // alarm must still keep its next scheduled occurrence (stable id).
-           await _rearmIfRepeating(index);
+           final restartRearmed = await _rearmIfRepeating(index);
+           // CR-02: if exact-alarm permission was revoked mid-ring, the restart
+           // (and/or the repeating re-arm) silently failed — surface it.
+           if ((!restarted || !restartRearmed) && mounted) await _showExactAlarmDialog();
             break;
           case RingResult.snooze:
            await prefs.setRinging(false);
@@ -233,7 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
            await prefs.setSnoozeTokens(newTokens);
 
            // 5-min transient snooze alarm (separate, transient id).
-           await scheduleAlarmFn(
+           final snoozed = await scheduleAlarmFn(
              await nextAlarmId(prefs),
              DateTime.now().add(const Duration(minutes: 5)),
              true,
@@ -244,16 +269,26 @@ class _HomeScreenState extends State<HomeScreen> {
            );
            // FIX-01: the snooze above is transient; the REPEATING entity must
            // also be re-armed to its next occurrence (stable id) so it survives.
-           await _rearmIfRepeating(index);
+           final snoozeRearmed = await _rearmIfRepeating(index);
 
            setState(() => snoozeTokens = newTokens);
-           _showSnack(AppStrings.get('snooze_used', currentLang));
+           // CR-02: only claim the snooze succeeded when it was actually
+           // scheduled; otherwise tell the user the exact-alarm permission is
+           // missing instead of a misleading "snooze used" message.
+           if ((!snoozed || !snoozeRearmed) && mounted) {
+             await _showExactAlarmDialog();
+           } else {
+             _showSnack(AppStrings.get('snooze_used', currentLang));
+           }
             break;
           case RingResult.success:
            await prefs.setRinging(false);
 
            // FIX-01: re-arm the repeating alarm to its next occurrence.
-           await _rearmIfRepeating(index);
+           final successRearmed = await _rearmIfRepeating(index);
+           // CR-02: a revoked exact-alarm permission would drop the repeating
+           // alarm silently — surface it so the user can re-grant.
+           if (!successRearmed && mounted) await _showExactAlarmDialog();
 
            _loadPreferences();
             break;
@@ -261,7 +296,8 @@ class _HomeScreenState extends State<HomeScreen> {
            // FIX-01: emergency stop halts the current fire, but a REPEATING
            // alarm must still keep its next occurrence (no silent loss).
            await prefs.setRinging(false);
-           await _rearmIfRepeating(index);
+           final emergencyRearmed = await _rearmIfRepeating(index);
+           if (!emergencyRearmed && mounted) await _showExactAlarmDialog();
             break;
           default:
             // Non-RingResult / null pop (no dismiss action). Re-arm paths above
@@ -354,6 +390,43 @@ class _HomeScreenState extends State<HomeScreen> {
     await Permission.scheduleExactAlarm.request();
   }
 
+  // RLS-04 / D-03: redirect dialog shown when the funnel reports the exact-alarm
+  // permission is missing. Mirrors the _checkBatteryOptimization dialog: a
+  // "close" action and an "Open Settings" action that deep-links to the system
+  // permission page via openAppSettings(). barrierDismissible:false so the user
+  // makes an explicit choice. context.mounted guard preserves async-safety.
+  Future<void> _showExactAlarmDialog() async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(AppStrings.get('exact_alarm_title', currentLang)),
+        content: Text(AppStrings.get('exact_alarm_desc', currentLang)),
+        actions: [
+          TextButton(
+            onPressed: () { if (context.mounted) Navigator.pop(context); },
+            child: Text(AppStrings.get('btn_close', currentLang), style: const TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () async { if (context.mounted) Navigator.pop(context); await openAppSettings(); },
+            child: Text(AppStrings.get('btn_open_settings', currentLang), style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // RLS-04 / D-03: catch the funnel signal. Runs the schedule thunk; if it
+  // returns false (exact-alarm permission missing => no Alarm.set happened) and
+  // we still have a UI context, show the redirect dialog. Returns the same bool
+  // so callers can roll back their optimistic state on failure. Signature is
+  // BYTE-IDENTICAL to Plan 03 Task 2 (Wave 2 signature compatibility).
+  Future<bool> _ensureExactAlarmOrPrompt(Future<bool> Function() scheduleCall) async {
+    final ok = await scheduleCall();
+    if (!ok && mounted) await _showExactAlarmDialog();
+    return ok;
+  }
+
   Future<void> _loadPreferences() async {
     final prefs = PrefsService(await SharedPreferences.getInstance());
     if (!mounted) return;
@@ -395,16 +468,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final now = DateTime.now();
     final prefs = PrefsService(await SharedPreferences.getInstance());
-    await scheduleAlarmFn(
-      await nextAlarmId(prefs),
+    final testId = await nextAlarmId(prefs);
+    // RLS-04 / D-03: route through the funnel-signal helper; if exact-alarm
+    // permission is missing the dialog is shown and we return silently.
+    final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(
+      testId,
       now.add(const Duration(seconds: 5)),
       true,
       currentLang,
       widget.currentRingtone,
       "Test",
       AlarmKind.test, // FIX-04 / D-03: a test alarm never earns streak.
-    );
-    if (!mounted) return;
+    ));
+    if (!mounted || !ok) return;
     _showSnack(AppStrings.get('test_start', currentLang));
   }
 
@@ -550,16 +626,32 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime _calculateAlarmDateTime(TimeOfDay time, List<int> repeatDays) =>
       calculateAlarmDateTime(time, repeatDays);
 
-  Future<void> _addAlarm() async {
+  // UX-01: single source of truth for deriving the repeat-mode label from a
+  // list of repeat days. MUST stay byte-consistent with the list-render
+  // derivation (see build()'s ListView.builder daysText) so the modal pre-fill
+  // and the list row never diverge. 'once' (empty) / 'daily' (all 7) /
+  // 'weekdays' (Mon-Fri, no Sat/Sun) / 'custom' (anything else).
+  String _deriveRepeatMode(List<int> days) {
+    if (days.isEmpty) return 'once';
+    if (days.length == 7) return 'daily';
+    if (days.length == 5 && !days.contains(6) && !days.contains(7)) return 'weekdays';
+    return 'custom';
+  }
+
+  // UX-01 / D-01: shared add/edit modal. `editing == null` => add a new alarm
+  // (existing flow, new monotonic id). `editing != null` => in-place edit: the
+  // fields are pre-filled and the SAME editing.id is preserved on save (Task 2).
+  Future<void> _addAlarm({AlarmEntity? editing}) async {
     if (savedBarcodes.isEmpty) {
       _showSnack(AppStrings.get('add_item_first', currentLang));
       return;
     }
 
-    TimeOfDay tempTime = TimeOfDay.now();
-    List<int> tempDays = [];
-    String tempLabel = "";
-    String repeatMode = 'once'; 
+    // UX-01 / D-01: pre-fill from `editing` when editing, else add-mode defaults.
+    TimeOfDay tempTime = editing?.time ?? TimeOfDay.now();
+    List<int> tempDays = editing != null ? List<int>.from(editing.repeatDays) : [];
+    String tempLabel = editing?.label ?? "";
+    String repeatMode = _deriveRepeatMode(tempDays);
 
     await showModalBottomSheet(
       context: context,
@@ -578,7 +670,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       TextButton(onPressed: () => Navigator.pop(context), child: Text(AppStrings.get('btn_cancel', currentLang), style: const TextStyle(color: Colors.grey))),
-                      Text(AppStrings.get('add_alarm_title', currentLang), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                      Text(AppStrings.get(editing == null ? 'add_alarm_title' : 'edit_alarm_title', currentLang), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                       TextButton(
                         onPressed: () => Navigator.pop(context, 'SAVE'),
                         child: Text(AppStrings.get('btn_save', currentLang), style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
@@ -599,11 +691,36 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: CupertinoDatePicker(
                         mode: CupertinoDatePickerMode.time,
                         use24hFormat: true,
-                        initialDateTime: DateTime.now(),
+                        // Pitfall 3: a TimeOfDay cannot be passed directly; when
+                        // editing, build a DateTime on today's date carrying the
+                        // alarm's hour/minute so the picker shows the real time
+                        // (not 00:00). Add-mode keeps DateTime.now().
+                        initialDateTime: editing != null
+                            ? () {
+                                final now = DateTime.now();
+                                return DateTime(now.year, now.month, now.day, tempTime.hour, tempTime.minute);
+                              }()
+                            : DateTime.now(),
                         onDateTimeChanged: (DateTime newDateTime) {
-                           tempTime = TimeOfDay.fromDateTime(newDateTime);
+                           setModalState(() {
+                             tempTime = TimeOfDay.fromDateTime(newDateTime);
+                           });
                         },
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Live "remaining time" label — rebuilt by StatefulBuilder
+                  // whenever tempTime (time picker) or tempDays (repeat menu)
+                  // change, so the user sees how far away the alarm is BEFORE
+                  // saving. Pure _remainingText needs no `mounted` guard.
+                  Text(
+                    _remainingText(_calculateAlarmDateTime(tempTime, tempDays)),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
                     ),
                   ),
                   const Divider(),
@@ -728,19 +845,26 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     ).then((value) async {
-       if (value == 'SAVE') {
-          final dateTime = _calculateAlarmDateTime(tempTime, tempDays);
+       if (value != 'SAVE') return;
+
+       final dateTime = _calculateAlarmDateTime(tempTime, tempDays);
+
+       if (editing == null) {
+          // --- ADD path (unchanged): new monotonic id ---
           final prefs = PrefsService(await SharedPreferences.getInstance());
 
           final newAlarm = AlarmEntity(
             id: await nextAlarmId(prefs),
             time: tempTime,
-            repeatDays: tempDays, 
+            repeatDays: tempDays,
             label: tempLabel,
-            isActive: true, 
+            isActive: true,
           );
 
-          await scheduleAlarmFn(newAlarm.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real);
+          // RLS-04 / D-03: if exact-alarm permission is missing the funnel does
+          // NOT set the alarm and the dialog is shown — do not add/persist it.
+          final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(newAlarm.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real));
+          if (!ok) return;
 
           setState(() {
             alarms.add(newAlarm);
@@ -748,7 +872,52 @@ class _HomeScreenState extends State<HomeScreen> {
           });
           _saveAlarms();
           if (mounted) _showRemainingTime(dateTime);
+          return;
        }
+
+       // --- EDIT path (UX-01 / D-01, D-02): preserve the SAME editing.id ---
+       // T-03-08 mitigation: nextAlarmId() is NEVER called here, so re-arming
+       // replaces the same occurrence instead of orphaning a stale schedule.
+       final idx = alarms.indexWhere((a) => a.id == editing.id);
+       if (idx == -1) return; // alarm vanished (e.g. deleted) — nothing to edit.
+
+       setState(() {
+         alarms[idx].time = tempTime;
+         alarms[idx].repeatDays = tempDays;
+         alarms[idx].label = tempLabel;
+         // UX-01 (deliberate D-02 reversal): editing a PASSIVE (Switch off) alarm
+         // and tapping SAVE now auto-activates it. Idempotent for already-active
+         // alarms (true → true). User confirmed this during device UAT.
+         alarms[idx].isActive = true;
+         // Same time-of-day ordering the add path uses.
+         alarms.sort((a, b) => (a.time.hour * 60 + a.time.minute).compareTo(b.time.hour * 60 + b.time.minute));
+       });
+       _saveAlarms();
+
+       // UX-01: passive AND active alarms now go through the SAME scheduling
+       // funnel below. The previous D-02 early-return (passive alarm just
+       // updated its entity without scheduling) was deliberately removed —
+       // editing + SAVE always arms the alarm. The CR-01 ghost-alarm fallback
+       // still protects the passive→active path (exact-alarm permission denied
+       // flips isActive back to false + persists).
+
+       // Cancel the old schedule, then re-arm at the new time with the SAME id.
+       // The re-arm goes through Plan 02's funnel-signal helper (same signature,
+       // not redefined) so the edit save passes the in-funnel exact-alarm gate
+       // (T-03-10 — no leaked Alarm.set; single funnel / D-03).
+       await Alarm.stop(editing.id);
+       final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(editing.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real));
+       if (!ok) {
+         // CR-01: the old schedule was already stopped and the new one was NOT
+         // set (exact-alarm permission missing — the helper already showed the
+         // redirect dialog). Flip the visible state to OFF so the user never
+         // sees an "active" alarm that the OS will never fire (core-value
+         // breach). Re-enabling the Switch re-attempts the arm via _toggleAlarm.
+         if (mounted) setState(() => alarms[idx].isActive = false);
+         _saveAlarms();
+         return;
+       }
+       if (mounted) _showRemainingTime(dateTime);
     });
   }
 
@@ -765,8 +934,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       
       final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
-      
-      await scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
+
+      // RLS-04 / D-03: catch the funnel signal. If exact-alarm permission is
+      // missing, the dialog is shown and the Switch is rolled back to off.
+      final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real));
+      if (!ok) {
+        if (mounted) setState(() => alarms[index].isActive = false);
+        _saveAlarms();
+        return;
+      }
 
       if (mounted) _showRemainingTime(nextTime);
     } else {
@@ -784,16 +960,24 @@ class _HomeScreenState extends State<HomeScreen> {
     _saveAlarms();
   }
 
-  void _showRemainingTime(DateTime target) {
+  // Pure helper: build the human-readable "rings in ..." string for a target
+  // DateTime. Uses DateTime.now() only (no `mounted`/BuildContext needed), so it
+  // is safe to call during widget builds (e.g. the live modal label). Single
+  // source of truth — _showRemainingTime delegates here (DRY).
+  String _remainingText(DateTime target) {
     final now = DateTime.now();
     final difference = target.difference(now);
     final days = difference.inDays;
     final hours = difference.inHours % 24;
     final minutes = difference.inMinutes % 60;
-    
-    String msg = currentLang == 'tr' 
-      ? "${days > 0 ? "$days gün " : ""}${hours > 0 ? "$hours saat " : ""}$minutes dakika sonra çalacak." 
-      : "${days > 0 ? "$days days " : ""}${hours > 0 ? "$hours hours " : ""}$minutes minutes.";
+
+    return currentLang == 'tr'
+      ? "${days > 0 ? "$days gün " : ""}${hours > 0 ? "$hours saat " : ""}$minutes dakika sonra çalacak."
+      : "Rings in ${days > 0 ? "$days days " : ""}${hours > 0 ? "$hours hours " : ""}$minutes minutes.";
+  }
+
+  void _showRemainingTime(DateTime target) {
+    final msg = _remainingText(target);
 
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1019,15 +1203,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     final alarm = alarms[index];
                     
                     // LIST VIEW: TIME + LABEL + DAYS
-                    String daysText;
-                    if (alarm.repeatDays.isEmpty) {
-                      daysText = AppStrings.get('repeat_once', currentLang);
-                    } else if (alarm.repeatDays.length == 7) {
-                      daysText = AppStrings.get('daily_repeat', currentLang);
-                    } else if (alarm.repeatDays.length == 5 && !alarm.repeatDays.contains(6) && !alarm.repeatDays.contains(7)) {
-                       daysText = AppStrings.get('weekdays_repeat', currentLang);
-                    } else {
-                       daysText = alarm.repeatDays.map((d) => AppStrings.getDayShortName(d, currentLang)).join(', ');
+                    // UX-01: derive the repeat label through the SAME helper the
+                    // edit modal uses (_deriveRepeatMode) so the list row and the
+                    // pre-filled modal never diverge (single source of truth).
+                    final String daysText;
+                    switch (_deriveRepeatMode(alarm.repeatDays)) {
+                      case 'once':
+                        daysText = AppStrings.get('repeat_once', currentLang);
+                      case 'daily':
+                        daysText = AppStrings.get('daily_repeat', currentLang);
+                      case 'weekdays':
+                        daysText = AppStrings.get('weekdays_repeat', currentLang);
+                      default:
+                        daysText = alarm.repeatDays.map((d) => AppStrings.getDayShortName(d, currentLang)).join(', ');
                     }
 
                     return Dismissible(
@@ -1050,6 +1238,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         child: ListTile(
                           contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          // UX-01 / D-01: tap the row to open the pre-filled edit
+                          // modal. Distinct from the Dismissible swipe (delete)
+                          // and the trailing Switch (toggle) — gestures don't clash.
+                          onTap: () => _addAlarm(editing: alarm),
                           title: Row(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
