@@ -746,6 +746,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       fontSize: 14,
                     ),
                   ),
+                  // The settings rows (label, repeat, mission) live in a
+                  // scrollable area so the fixed-height (600) sheet never clips
+                  // the last row — the mission selector was overflowing off the
+                  // bottom on phone-height screens before this Expanded+ListView.
+                  Expanded(
+                    child: ListView(
+                      children: [
                   const Divider(),
                   ListTile(
                     leading: const Icon(Icons.label),
@@ -909,6 +916,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                       );
                     },
+                  ),
+                      ],
+                    ),
                   ),
                 ],
               ),
