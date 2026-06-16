@@ -85,6 +85,16 @@ class AppStrings {
             'Without it the alarm cannot be set. Please enable the permission in settings.'
     },
     'btn_open_settings': {'tr': 'Ayarları Aç', 'en': 'Open Settings'},
+    // MIS-01 / ENG-03: Lümen mission (Stage 2) strings (TR/EN parity, UI-SPEC).
+    'mission_lumen_title': {'tr': '2. AŞAMA: LÜMEN', 'en': 'STAGE 2: LUMEN'},
+    'mission_lumen_guide': {'tr': 'IŞIĞA DOĞRU TUT — DAHA PARLAK!', 'en': 'POINT AT LIGHT — BRIGHTER!'},
+    'mission_lumen_brighter': {'tr': 'DAHA PARLAK!', 'en': 'BRIGHTER!'},
+    'mission_lumen_hold': {'tr': 'NEREDEYSE TAMAM, SABIT TUT!', 'en': 'ALMOST THERE, HOLD STEADY!'},
+    'mission_sound_lowered': {'tr': 'Ses kısıldı', 'en': 'Sound lowered'},
+    'mission_menu_title': {'tr': 'Görev', 'en': 'Mission'},
+    'mission_none': {'tr': 'Görev Yok', 'en': 'No Mission'},
+    'mission_lumen_name': {'tr': 'Lümen (Işığa Tut)', 'en': 'Lumen (Find Light)'},
+    'mission_select_title': {'tr': 'Görev Seç', 'en': 'Select Mission'},
   };
 
   static const Map<int, Map<String, String>> _dayShortNames = {
