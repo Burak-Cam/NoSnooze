@@ -36,8 +36,8 @@ class AppStrings {
     'emergency_btn': {'tr': 'ACİL DURUM KAPAT', 'en': 'EMERGENCY STOP'},
     'cheat_title': {'tr': '🚨 HİLE TESPİT EDİLDİ! 🚨', 'en': '🚨 CHEAT DETECTED! 🚨'},
     'cheat_msg': {
-      'tr': 'Dün alarm çalarken uygulamayı zorla kapatıp kaçtığını tespit ettik.\n\nBu davranış "NoSnooze" ruhuna aykırı!\n\nCEZA: Seri (Streak) sıfırlandı.',
-      'en': 'We detected that you forced closed the app while the alarm was ringing.\n\nThis is against the "NoSnooze" spirit!\n\nPENALTY: Streak reset.'
+      'tr': 'Dün alarm çalarken uygulamayı zorla kapatıp kaçtığını tespit ettik.\n\nBu davranış "ScanAwake" ruhuna aykırı!\n\nCEZA: Seri (Streak) sıfırlandı.',
+      'en': 'We detected that you forced closed the app while the alarm was ringing.\n\nThis is against the "ScanAwake" spirit!\n\nPENALTY: Streak reset.'
     },
     'max_items': {'tr': 'En fazla 3 ürün eklenebilir.', 'en': 'Max 3 items allowed.'},
     'streak_title': {'tr': 'Ateş Serisi (Streak)', 'en': 'Fire Streak'},
@@ -85,6 +85,30 @@ class AppStrings {
             'Without it the alarm cannot be set. Please enable the permission in settings.'
     },
     'btn_open_settings': {'tr': 'Ayarları Aç', 'en': 'Open Settings'},
+    // MIS-01 / ENG-03: Lümen mission (Stage 2) strings (TR/EN parity, UI-SPEC).
+    'mission_lumen_title': {'tr': '2. AŞAMA: LÜMEN', 'en': 'STAGE 2: LUMEN'},
+    'mission_lumen_guide': {'tr': 'IŞIĞA DOĞRU TUT — DAHA PARLAK!', 'en': 'POINT AT LIGHT — BRIGHTER!'},
+    'mission_lumen_brighter': {'tr': 'DAHA PARLAK!', 'en': 'BRIGHTER!'},
+    'mission_lumen_hold': {'tr': 'NEREDEYSE TAMAM, SABIT TUT!', 'en': 'ALMOST THERE, HOLD STEADY!'},
+    'mission_sound_lowered': {'tr': 'Ses kısıldı', 'en': 'Sound lowered'},
+    'mission_menu_title': {'tr': 'Görev', 'en': 'Mission'},
+    'mission_none': {'tr': 'Görev Yok', 'en': 'No Mission'},
+    'mission_lumen_name': {'tr': 'Lümen (Işığa Tut)', 'en': 'Lumen (Find Light)'},
+    'mission_select_title': {'tr': 'Görev Seç', 'en': 'Select Mission'},
+    // MIS-02 / ENG-03: Renk Bulma (Color Find) mission (Stage 2) strings
+    // (TR/EN parity, UI-SPEC). Every key MUST exist in both languages —
+    // enforced by color_match_test.dart parity group (Pitfall 6).
+    'mission_color_title': {'tr': '2. AŞAMA: RENK BUL', 'en': 'STAGE 2: FIND THE COLOR'},
+    'mission_color_guide': {'tr': 'BU RENKTE BİR NESNE GÖSTER', 'en': 'SHOW AN OBJECT OF THIS COLOR'},
+    'mission_color_hold': {'tr': 'NEREDEYSE TAMAM, SABIT TUT!', 'en': 'ALMOST THERE, HOLD STEADY!'},
+    'mission_color_name': {'tr': 'Renk Bul', 'en': 'Find Color'},
+    'mission_color_reroll': {'tr': 'Yeniden Çevir', 'en': 'Reroll'},
+    'color_red': {'tr': 'Kırmızı', 'en': 'Red'},
+    'color_orange': {'tr': 'Turuncu', 'en': 'Orange'},
+    'color_yellow': {'tr': 'Sarı', 'en': 'Yellow'},
+    'color_green': {'tr': 'Yeşil', 'en': 'Green'},
+    'color_blue': {'tr': 'Mavi', 'en': 'Blue'},
+    'color_purple': {'tr': 'Mor', 'en': 'Purple'},
   };
 
   static const Map<int, Map<String, String>> _dayShortNames = {

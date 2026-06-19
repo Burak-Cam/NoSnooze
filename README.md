@@ -1,89 +1,93 @@
-# NoSnooze 📵
+# ScanAwake ⏰📷
 
-**"No Snooze Allowed. You Have To Get Up."**
+**"Scan to wake. You actually have to get up."**
 
-NoSnooze is an aggressive alarm application developed for people who have difficulty waking up. It **will not stop ringing until the user scans a pre-defined barcode**. Unlike standard alarms, NoSnooze forces you to get out of bed and perform a physical action.
+ScanAwake is an aggressive alarm app for people who struggle to wake up. A standard alarm is too easy to dismiss half-asleep — ScanAwake makes you *physically get out of bed*. To silence it you must scan a barcode/QR you pre-defined (toothpaste, a book in another room, the bathroom shampoo…), and — in v2.0 — then complete a real-world **wake-up task** before the alarm fully stops.
 
-## 🚀 Key Features
+> Android-first. Turkish (TR) and English (EN). Fully offline — no accounts, no network, no secrets.
 
-* **Barcode Dismissal:** The ONLY way to stop the alarm is by scanning a saved barcode of an item (toothpaste, book, or shampoo) with the camera.
-* **Fault-Tolerant Camera Management:** A custom "Restart Sequence" architecture prevents conflicts between the vibrator motor and the camera hardware.
-* **Smart Battery Management:** Stable operation even on devices with aggressive battery optimization, such as Xiaomi/MIUI.
-* **Multi-Language Support:** Full support for Turkish (TR) and English (EN).
-* **Dark Mode:** A full black, OLED-friendly interface that is easy on the eyes.
-* **Flashlight Control:** Integrated torch control for scanning barcodes easily in dark rooms.
+## ✨ What makes it different: the two-stage wake (v2.0)
 
-## 🛠️ Technical Architecture and Stack
+Most "scan to dismiss" alarms stop the moment you scan. ScanAwake's core differentiator is that the barcode is only **stage one**:
 
-This project is built with **Flutter** and incorporates specific engineering solutions against hardware limitations.
+1. **Stage 1 — Scan.** The alarm rings (full volume, looping, vibration, over the lock screen). The only way forward is to scan a pre-defined barcode with the camera.
+2. **Audio hand-off.** Scanning does **not** end the alarm — it drops the sound to ~50% (a continued soft loop) so you can't just roll over.
+3. **Stage 2 — Mission.** A real-world task appears. Only completing it fully silences the alarm and awards your streak.
 
-* **SDK:** Flutter (Dart 3.x)
-* **Alarm Engine:** `alarm: ^5.0.0` (Utilizes the Android AlarmManager API)
-* **Scanner:** `mobile_scanner: ^5.0.0` (ML Kit based)
-* **Storage:** `shared_preferences`
-* **Permissions:** `permission_handler`
+This keeps you awake and moving instead of dismissing-and-dozing.
 
-### 🔥 Critical Engineering Challenges and Solutions
+### Wake-up tasks (missions)
 
-Specialized algorithms were developed to overcome the hardware bottlenecks (Resource Busy) experienced particularly on **Redmi Note 9S** and similar mid-range devices:
+* **Lümen (Light)** — *available.* Point the phone at a bright light source (open the curtains, find a window) and hold it bright for a couple of seconds. Uses the camera's luminance, fully on-device.
+* **Color hunt** — *planned.* A slot machine picks a random color; show an object of that color to the camera.
+* **Object recognition (AI)** — *planned.* Show a common household item (cup, plate, cutlery); recognized on-device with ML Kit.
+* **Water sound** — *planned.* Run a tap; detected on-device with audio classification.
 
-#### 1. "Camera Resource Busy" / BufferQueue Abandoned Error
-The hardware would freeze when the camera tried to open while the alarm was ringing (vibration motor active).
+Each alarm can be assigned its own task (or **none**, which behaves like the classic v1 scan-to-stop).
 
-* **Solution:** A "Restart Sequence" is executed within `RingScreen`. When the user taps "Cut Vibration":
-    1.  The camera page is closed (`Navigator.pop`).
-    2.  The alarm is completely stopped.
-    3.  A **2.5 SECOND** hardware cool-down period is enforced (`Future.delayed`).
-    4.  The alarm is restarted silently.
-    5.  The camera is safely reopened after the delay.
+## 🔥 Gamification
 
-#### 2. CPU Overload (Lag)
-The camera continuously scanning at high frame rates would lock up the UI thread.
+* **Streak** — a "fire" streak that grows each genuine wake-up. Anti-cheat: the streak only resets on a *real* escape; a crash, OEM kill, or reboot never punishes an honest streak. Test/snooze dismissals never earn a streak.
+* **Snooze tokens** — a limited number of snoozes. Snoozing re-fires the same alarm **5 minutes** later, carrying the same wake-up task (so snooze can't be used to skip the mission).
 
-* **Solution:** Scanning speed was optimized using `DetectionSpeed.noDuplicates` within `MobileScannerController` and stabilized with an `isScanCompleted` flag, reducing CPU load by approximately 60%.
+## 🚀 Key features
 
-#### 3. "Machine Gun" Effect (Multi-Triggering)
-A single barcode read would trigger the stop function 10 times within milliseconds, causing instability.
+* **Barcode/QR dismissal** — up to 3 saved dismissal codes, any format.
+* **Fault-tolerant camera** — a custom "restart sequence" and single-camera release handling keep the camera reliable even on aggressive OEMs (Xiaomi/MIUI), where camera/vibration hardware contention is common.
+* **Reliable lock-screen alarm** — full-screen intent, `showWhenLocked` / `turnScreenOn`, and lock-screen continuity *through the two-stage hand-off* (the mission stays visible over the keyguard, no unlock required).
+* **Flexible scheduling** — one-shot and repeating (daily / weekdays / custom days), in-place editing.
+* **Ringtones** — 9 built-in sounds plus a custom audio file, with preview.
+* **TR/EN localization** and an OLED-friendly dark mode.
 
-* **Solution:** The system is locked immediately after the first successful read using a `PopScope` and boolean lock (`isLocked` flag).
+## 🛠️ Tech stack
 
-## ⚙️ Setup and Running the Project
+Built with **Flutter / Dart 3**, stock `setState` (no extra state-management framework).
 
-To run the project in your local environment:
+| Concern | Package |
+|---|---|
+| Full-screen looping alarms | `alarm` 5.1.5 |
+| Barcode/QR scanning (ML Kit) | `mobile_scanner` 5.2.3 |
+| Soft-loop audio hand-off & ringtone preview | `audioplayers` 6.5.1 |
+| Lümen luminance (headless camera) | `camera` |
+| Runtime permissions | `permission_handler` 11.4.0 |
+| Local persistence | `shared_preferences` 2.5.4 |
+| Custom ringtone picking | `file_picker` 8.3.7 |
 
-1.  Clone the repository:
-    ```bash
-    git clone [https://github.com/kullaniciadi/NoSnooze.git](https://github.com/kullaniciadi/NoSnooze.git)
-    ```
-2.  Install dependencies:
-    ```bash
-    flutter pub get
-    ```
-3.  Run the application (A physical device is recommended for testing the alarm functionality):
-    ```bash
-    flutter run
-    ```
+### Architecture
 
-## 📱 Android Configuration (Crucial)
+The codebase is modular — `constants / models / services / screens / l10n / missions` — fed by a tested core:
 
-This project utilizes critical permissions and settings within `AndroidManifest.xml`:
+* `AlarmGateway` + `scheduleAlarmFn` — the single funnel for **all** scheduling (re-arm correctness, exact-alarm permission gate). Every dismiss path (success / snooze / restart / emergency) re-arms a repeating alarm and carries its wake-up task.
+* Pluggable `Mission` contract — `RingScreen` renders the task after a successful scan; missions return success/failure.
+* Hand-written `AlarmEntity` JSON; gamification + anti-cheat live in pure, unit-tested helpers.
+* **92 tests**, `flutter analyze` clean, CI gate + branch protection on `main`.
 
-* `SCHEDULE_EXACT_ALARM`: For timely alarm triggering.
-* `WAKE_LOCK` & `turnScreenOn`: To ensure the alarm interface displays over the lock screen.
-* `showWhenLocked`: Allows the `RingScreen` to appear even when the phone is locked.
+## ⚙️ Setup
+
+A **physical Android device is strongly recommended** — alarm, camera, vibration, full-screen and lock-screen behavior are not meaningfully testable on desktop/web.
+
+```bash
+flutter pub get
+flutter run        # or: flutter run -d <deviceId>
+```
+
+### Android permissions (why they're needed)
+
+* `SCHEDULE_EXACT_ALARM` / `USE_EXACT_ALARM` — fire on time.
+* `USE_FULL_SCREEN_INTENT` + `showWhenLocked` / `turnScreenOn` + `WAKE_LOCK` — show the ringing/mission UI over the lock screen.
+* `CAMERA` / `FLASHLIGHT` — barcode scanning and the Lümen task.
+* `RECEIVE_BOOT_COMPLETED`, `VIBRATE`, `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`.
+
+> **Xiaomi / MIUI note:** for alarms to fire reliably from a locked screen or after reboot, also grant *Autostart* and *Show on lock screen* in MIUI app settings, and exempt the app from battery optimization.
 
 ## 🤝 Contributing
 
-1.  Fork the repository.
-2.  Create a feature branch (`git checkout -b feature/NewFeature`).
-3.  Commit your changes (`git commit -m 'feat: Added new feature'`).
-4.  Push to the branch (`git push origin feature/NewFeature`).
-5.  Open a Pull Request.
+`main` is branch-protected — land changes via a feature branch + PR that passes CI (analyze + tests).
 
 ## 📝 License
 
-This project is licensed under the MIT License.
+MIT.
 
 ---
 **Developer:** Burak Çam
-**Version:** v1.0 (Stable)
+**Status:** v1.0.0 shipped; v2.0 (two-stage wake) in active development.

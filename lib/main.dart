@@ -18,17 +18,17 @@ Future<void> main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
-  runApp(const NoSnoozeApp());
+  runApp(const ScanAwakeApp());
 }
 
-class NoSnoozeApp extends StatefulWidget {
-  const NoSnoozeApp({super.key});
+class ScanAwakeApp extends StatefulWidget {
+  const ScanAwakeApp({super.key});
 
   @override
-  State<NoSnoozeApp> createState() => _NoSnoozeAppState();
+  State<ScanAwakeApp> createState() => _ScanAwakeAppState();
 }
 
-class _NoSnoozeAppState extends State<NoSnoozeApp> {
+class _ScanAwakeAppState extends State<ScanAwakeApp> {
   // UX-02 / D-09: device-aware default (EN device => en, otherwise => tr),
   // resolved at construction and overridden by a saved app_lang in
   // _loadPreferences. No longer a hard English default.
@@ -81,7 +81,7 @@ class _NoSnoozeAppState extends State<NoSnoozeApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'NoSnooze',
+      title: 'ScanAwake',
       locale: _locale, 
       supportedLocales: const [Locale('en'), Locale('tr')],
       localizationsDelegates: const [

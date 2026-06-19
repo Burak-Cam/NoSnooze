@@ -139,7 +139,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (index == -1) return true;
     if (alarms[index].repeatDays.isEmpty) return true;
     final nextTime = _calculateAlarmDateTime(alarms[index].time, alarms[index].repeatDays);
-    return scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real);
+    // ENG-03 / MIS-01: carry the alarm's persisted mission into the re-arm.
+    // scheduleAlarmFn's missionType defaults to none, so omitting it here would
+    // silently DOWNGRADE a repeating Lümen alarm to MissionType.none on every
+    // re-fire (losing its mission forever). A repeating Lümen alarm MUST re-arm
+    // AS Lümen — hence the explicit pass of alarms[index].missionType.
+    return scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real, missionType: alarms[index].missionType);
   }
 
   void _startAlarmListener() {
@@ -175,6 +180,12 @@ class _HomeScreenState extends State<HomeScreen> {
       // legacy alarm scheduled before this change has no payload (null/empty)
       // and is treated as AlarmKind.real — back-compat, never crashes.
       AlarmKind firedKind = AlarmKind.real;
+      // ENG-03 / MIS-01 / D-11: decode the dismissal mission from the SAME
+      // payload. Default none (legacy alarms, missing/corrupt payload). Decoded
+      // with `asNameMap()[x] ?? none` (NOT byName — Pitfall 5): an unknown/typo/
+      // future mission name (e.g. 'water' from a newer build) falls to none and
+      // NEVER throws, so the dismiss path can always proceed (core value).
+      MissionType firedMission = MissionType.none;
       final rawPayload = alarmSettings.payload;
       if (rawPayload != null && rawPayload.isNotEmpty) {
         try {
@@ -182,9 +193,13 @@ class _HomeScreenState extends State<HomeScreen> {
           if (decodedPayload is Map && decodedPayload['kind'] is String) {
             firedKind = AlarmKind.values.byName(decodedPayload['kind'] as String);
           }
+          if (decodedPayload is Map && decodedPayload['mission'] is String) {
+            firedMission = MissionType.values.asNameMap()[decodedPayload['mission'] as String] ?? MissionType.none;
+          }
         } catch (_) {
-          // Corrupt/unknown payload => safe default (real). Never crash on dismiss.
+          // Corrupt/unknown payload => safe defaults. Never crash on dismiss.
           firedKind = AlarmKind.real;
+          firedMission = MissionType.none;
         }
       }
 
@@ -220,6 +235,11 @@ class _HomeScreenState extends State<HomeScreen> {
               availableTokens: snoozeTokens,
               label: index != -1 ? alarms[index].label : '',
               alarmKind: firedKind,
+              // ENG-01 / MIS-01: the decoded mission + the alarm's ringtone (for
+              // the Stage-2 soft loop). RingResult switch below is UNCHANGED — a
+              // mission success returns RingResult.success (re-armed at :289).
+              missionType: firedMission,
+              ringtonePath: widget.currentRingtone,
             ),
           ),
         );
@@ -241,7 +261,12 @@ class _HomeScreenState extends State<HomeScreen> {
            // RLS-05 / D-07: safe-side 2.5s cooldown before re-firing so the
            // camera/vibration stack settles (avoids camera-busy on restart).
            await Future.delayed(const Duration(milliseconds: kCameraRestartCooldownMs));
-           final restarted = await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real);
+           // ENG-03 / MIS-01: the restart re-fire MUST carry the SAME mission as
+           // the fire that just happened — otherwise a restarted Lümen alarm
+           // silently downgrades to MissionType.none (barcode then fully closes
+           // it, losing the two-stage wake). firedMission is the decoded mission
+           // of this very fire.
+           final restarted = await scheduleAlarmFn(alarmSettings.id, DateTime.now().add(const Duration(milliseconds: 100)), false, currentLang, widget.currentRingtone, index != -1 ? alarms[index].label : '', AlarmKind.real, missionType: firedMission);
            // FIX-01: the transient restart fire above is a one-off; a REPEATING
            // alarm must still keep its next scheduled occurrence (stable id).
            final restartRearmed = await _rearmIfRepeating(index);
@@ -266,6 +291,10 @@ class _HomeScreenState extends State<HomeScreen> {
              widget.currentRingtone,
              "Snoozed",
              AlarmKind.snooze, // FIX-04 / D-03: snooze re-arm never earns streak.
+             // ENG-03 / MIS-01 / D-14: the snoozed re-fire keeps the SAME mission
+             // so snoozing can't be used to escape the Lümen task (snooze is
+             // pre-barcode only). AlarmKind.snooze still blocks the streak.
+             missionType: firedMission,
            );
            // FIX-01: the snooze above is transient; the REPEATING entity must
            // also be re-armed to its next occurrence (stable id) so it survives.
@@ -651,6 +680,9 @@ class _HomeScreenState extends State<HomeScreen> {
     TimeOfDay tempTime = editing?.time ?? TimeOfDay.now();
     List<int> tempDays = editing != null ? List<int>.from(editing.repeatDays) : [];
     String tempLabel = editing?.label ?? "";
+    // D-11 / UX-01: pre-fill the per-alarm mission. Legacy alarms (predating the
+    // field) read MissionType.none via the Plan-01 defensive fromJson.
+    MissionType tempMissionType = editing?.missionType ?? MissionType.none;
     String repeatMode = _deriveRepeatMode(tempDays);
 
     await showModalBottomSheet(
@@ -723,6 +755,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       fontSize: 14,
                     ),
                   ),
+                  // The settings rows (label, repeat, mission) live in a
+                  // scrollable area so the fixed-height (600) sheet never clips
+                  // the last row — the mission selector was overflowing off the
+                  // bottom on phone-height screens before this Expanded+ListView.
+                  Expanded(
+                    child: ListView(
+                      children: [
                   const Divider(),
                   ListTile(
                     leading: const Icon(Icons.label),
@@ -838,6 +877,72 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     },
                   ),
+                  const Divider(),
+                  // MISSION MENU (D-09): verbatim mirror of the repeat-menu
+                  // ListTile + showModalBottomSheet pattern above.
+                  ListTile(
+                    leading: const Icon(Icons.flag),
+                    title: Text(AppStrings.get('mission_menu_title', currentLang)),
+                    subtitle: Text(
+                      switch (tempMissionType) {
+                        MissionType.lumen =>
+                          AppStrings.get('mission_lumen_name', currentLang),
+                        MissionType.renk =>
+                          AppStrings.get('mission_color_name', currentLang),
+                        MissionType.none =>
+                          AppStrings.get('mission_none', currentLang),
+                      },
+                    ),
+                    onTap: () async {
+                      await showModalBottomSheet(
+                        context: context,
+                        builder: (BuildContext context) {
+                          // D-10: ONLY the two ready missions — no coming-soon /
+                          // disabled rows.
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Text(
+                                  AppStrings.get('mission_select_title', currentLang),
+                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              ListTile(
+                                leading: const Icon(Icons.block),
+                                title: Text(AppStrings.get('mission_none', currentLang)),
+                                onTap: () {
+                                  setModalState(() => tempMissionType = MissionType.none);
+                                  Navigator.pop(context);
+                                },
+                              ),
+                              ListTile(
+                                leading: const Icon(Icons.wb_sunny),
+                                title: Text(AppStrings.get('mission_lumen_name', currentLang)),
+                                onTap: () {
+                                  setModalState(() => tempMissionType = MissionType.lumen);
+                                  Navigator.pop(context);
+                                },
+                              ),
+                              // MIS-02: the Renk Bulma (Find Color) mission row.
+                              ListTile(
+                                leading: const Icon(Icons.palette),
+                                title: Text(AppStrings.get('mission_color_name', currentLang)),
+                                onTap: () {
+                                  setModalState(() => tempMissionType = MissionType.renk);
+                                  Navigator.pop(context);
+                                },
+                              ),
+                            ],
+                          );
+                        }
+                      );
+                    },
+                  ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             );
@@ -859,11 +964,12 @@ class _HomeScreenState extends State<HomeScreen> {
             repeatDays: tempDays,
             label: tempLabel,
             isActive: true,
+            missionType: tempMissionType,
           );
 
           // RLS-04 / D-03: if exact-alarm permission is missing the funnel does
           // NOT set the alarm and the dialog is shown — do not add/persist it.
-          final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(newAlarm.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real));
+          final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(newAlarm.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real, missionType: tempMissionType));
           if (!ok) return;
 
           setState(() {
@@ -885,6 +991,9 @@ class _HomeScreenState extends State<HomeScreen> {
          alarms[idx].time = tempTime;
          alarms[idx].repeatDays = tempDays;
          alarms[idx].label = tempLabel;
+         // ENG-03 / MIS-01: persist the selected mission on the same entity (the
+         // editing.id stays stable — UX-01).
+         alarms[idx].missionType = tempMissionType;
          // UX-01 (deliberate D-02 reversal): editing a PASSIVE (Switch off) alarm
          // and tapping SAVE now auto-activates it. Idempotent for already-active
          // alarms (true → true). User confirmed this during device UAT.
@@ -906,7 +1015,7 @@ class _HomeScreenState extends State<HomeScreen> {
        // not redefined) so the edit save passes the in-funnel exact-alarm gate
        // (T-03-10 — no leaked Alarm.set; single funnel / D-03).
        await Alarm.stop(editing.id);
-       final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(editing.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real));
+       final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(editing.id, dateTime, true, currentLang, widget.currentRingtone, tempLabel, AlarmKind.real, missionType: tempMissionType));
        if (!ok) {
          // CR-01: the old schedule was already stopped and the new one was NOT
          // set (exact-alarm permission missing — the helper already showed the
@@ -937,7 +1046,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
       // RLS-04 / D-03: catch the funnel signal. If exact-alarm permission is
       // missing, the dialog is shown and the Switch is rolled back to off.
-      final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real));
+      // ENG-03 / MIS-01: re-enabling an alarm via the Switch must carry its
+      // persisted mission too (else a toggled-on Lümen alarm re-arms as none).
+      final ok = await _ensureExactAlarmOrPrompt(() => scheduleAlarmFn(alarms[index].id, nextTime, true, currentLang, widget.currentRingtone, alarms[index].label, AlarmKind.real, missionType: alarms[index].missionType));
       if (!ok) {
         if (mounted) setState(() => alarms[index].isActive = false);
         _saveAlarms();
@@ -1033,7 +1144,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: GestureDetector(
           onLongPress: _showDeveloperOptions,
-          child: const Text("NoSnooze", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
+          child: const Text("ScanAwake", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
         ),
         centerTitle: true,
         leading: IconButton(
@@ -1093,7 +1204,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Icon(Icons.alarm_on, size: 50, color: Colors.white),
                   SizedBox(height: 10),
-                  Text("NoSnooze", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text("ScanAwake", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
