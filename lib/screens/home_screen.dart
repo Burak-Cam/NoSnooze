@@ -1130,7 +1130,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: GestureDetector(
           onLongPress: _showDeveloperOptions,
-          child: const Text("NoSnooze", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
+          child: const Text("ScanAwake", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
         ),
         centerTitle: true,
         leading: IconButton(
@@ -1190,7 +1190,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Icon(Icons.alarm_on, size: 50, color: Colors.white),
                   SizedBox(height: 10),
-                  Text("NoSnooze", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text("ScanAwake", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),

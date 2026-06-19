@@ -98,7 +98,7 @@ Future<bool> scheduleAlarmFn(
       volumeEnforced: true,
     ),
     notificationSettings: NotificationSettings(
-      title: label.isEmpty ? 'NoSnooze' : label,
+      title: label.isEmpty ? 'ScanAwake' : label,
       body: AppStrings.get('notification_body', lang),
       stopButton: null,
       icon: 'notification_icon',
