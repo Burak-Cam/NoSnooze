@@ -7,6 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../l10n/app_strings.dart';
+import '../missions/color_mission.dart';
 import '../missions/lumen_mission.dart';
 import '../missions/mission.dart';
 import '../models/alarm_entity.dart';
@@ -363,7 +364,13 @@ class _RingScreenState extends State<RingScreen> {
     if (!mounted) return;
 
     setState(() {
-      _mission = LumenMission(language: widget.language);
+      // MIS-02: select the concrete Mission by the alarm's type. renk → the
+      // new ColorMission; lumen (and any future/default value) → LumenMission.
+      // none never reaches here (handled by the != none guard upstream).
+      _mission = switch (widget.missionType) {
+        MissionType.renk => ColorMission(language: widget.language),
+        _ => LumenMission(language: widget.language),
+      };
       _missionActive = true;
     });
   }

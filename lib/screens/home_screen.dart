@@ -884,9 +884,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     leading: const Icon(Icons.flag),
                     title: Text(AppStrings.get('mission_menu_title', currentLang)),
                     subtitle: Text(
-                      tempMissionType == MissionType.lumen
-                          ? AppStrings.get('mission_lumen_name', currentLang)
-                          : AppStrings.get('mission_none', currentLang),
+                      switch (tempMissionType) {
+                        MissionType.lumen =>
+                          AppStrings.get('mission_lumen_name', currentLang),
+                        MissionType.renk =>
+                          AppStrings.get('mission_color_name', currentLang),
+                        MissionType.none =>
+                          AppStrings.get('mission_none', currentLang),
+                      },
                     ),
                     onTap: () async {
                       await showModalBottomSheet(
@@ -917,6 +922,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                 title: Text(AppStrings.get('mission_lumen_name', currentLang)),
                                 onTap: () {
                                   setModalState(() => tempMissionType = MissionType.lumen);
+                                  Navigator.pop(context);
+                                },
+                              ),
+                              // MIS-02: the Renk Bulma (Find Color) mission row.
+                              ListTile(
+                                leading: const Icon(Icons.palette),
+                                title: Text(AppStrings.get('mission_color_name', currentLang)),
+                                onTap: () {
+                                  setModalState(() => tempMissionType = MissionType.renk);
                                   Navigator.pop(context);
                                 },
                               ),
