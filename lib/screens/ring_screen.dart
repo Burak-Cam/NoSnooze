@@ -90,6 +90,49 @@ class _RingScreenState extends State<RingScreen> {
   final AudioPlayer _softPlayer = AudioPlayer();
   Mission? _mission;
 
+  // FIX (lockscreen-mission-hidden): re-assert the lock-screen window flags after
+  // Alarm.stop(). The alarm package turns setShowWhenLocked(false) the moment its
+  // AlarmRingingLiveData flips false on Alarm.stop, which drops the Stage-2
+  // surface behind the keyguard. This native call (MainActivity) re-enables
+  // showWhenLocked/turnScreenOn so Stage 2 stays visible over the lock screen,
+  // exactly like Stage 1 was (no keyguard dismiss — see MainActivity comment).
+  static const MethodChannel _keyguardChannel =
+      MethodChannel('com.burakcam.uyan/keyguard');
+
+  // CYCLE 2 (device-verified): the alarm package flips AlarmRingingLiveData via
+  // postValue(false) — which is ASYNCHRONOUS — so the observer's
+  // setShowWhenLocked(false) runs on the main looper AFTER our synchronous
+  // re-assert and re-clears the flag. A single re-assert is therefore NOT enough.
+  // We re-assert several times: immediately, on the next frame, and on a few
+  // short delays, so a late postValue(false) is overridden. Best-effort: a
+  // channel failure (e.g. iOS) must never trap the user.
+  Future<void> _showOverLockscreen() async {
+    try {
+      await _keyguardChannel.invokeMethod('showOverLockscreen');
+    } catch (_) {
+      // No-op: not available on this platform / engine; the mission still runs.
+    }
+  }
+
+  // Re-assert across the postValue(false) race window. Best-effort throughout.
+  void _reassertLockscreenOverRace() {
+    // 1) Immediate (synchronous-ish) re-assert.
+    _showOverLockscreen();
+    // 2) Next frame — after the current main-looper tasks (incl. a queued
+    //    observer false) have a chance to run.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showOverLockscreen();
+    });
+    // 3) A few short delayed retries to outlast a late postValue(false) dispatch.
+    for (final ms in const [50, 150, 400]) {
+      Future<void>.delayed(Duration(milliseconds: ms), () {
+        if (!mounted) return;
+        _showOverLockscreen();
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -277,6 +320,17 @@ class _RingScreenState extends State<RingScreen> {
   // escape by decideCheat (D-15). It does NOT run the streak block and does NOT
   // pop — the screen transforms in place to the indigo Stage-2 mission surface.
   Future<void> _handoffToMission() async {
+    // FIX (lockscreen-mission-hidden): Alarm.stop() (called at the shared scan
+    // tail, just before this) made the alarm package run setShowWhenLocked(false)
+    // via its AlarmRingingLiveData observer, which would let MIUI's keyguard
+    // re-engage and hide the Stage-2 surface. Because that flip uses an ASYNC
+    // postValue(false), the observer's false runs AFTER a single synchronous
+    // re-assert — so we re-assert across the race window (immediate + post-frame
+    // + short delayed retries) to override the late false. Best-effort: a channel
+    // failure (e.g. iOS) must never trap the user.
+    _reassertLockscreenOverRace();
+    if (!mounted) return;
+
     // D-05: start the ~50% soft loop of the alarm's own ringtone so the audio
     // dips but never cuts (SPIKE 001-validated). Pitfall 6: resolve AssetSource
     // (prefix stripped) vs DeviceFileSource (custom file).
