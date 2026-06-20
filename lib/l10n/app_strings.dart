@@ -109,6 +109,28 @@ class AppStrings {
     'color_green': {'tr': 'Yeşil', 'en': 'Green'},
     'color_blue': {'tr': 'Mavi', 'en': 'Blue'},
     'color_purple': {'tr': 'Mor', 'en': 'Purple'},
+    // MIS-03 / ENG-03: Nesne Tanıma (Object Find, ML Kit) mission (Stage 2)
+    // strings (TR/EN parity, UI-SPEC). Every key MUST exist in both languages —
+    // enforced by object_match_test.dart parity group (Pitfall 6). `object_<key>`
+    // names mirror kObjectTargets keys; ML Kit labels stay English (internal map).
+    'mission_object_title': {'tr': '2. AŞAMA: NESNE BUL', 'en': 'STAGE 2: FIND THE OBJECT'},
+    'mission_object_guide': {'tr': 'ŞUNU GÖSTER:', 'en': 'SHOW THIS:'},
+    'mission_object_hold': {'tr': 'NEREDEYSE TAMAM, SABIT TUT!', 'en': 'ALMOST THERE, HOLD STEADY!'},
+    'mission_object_name': {'tr': 'Nesne Bul', 'en': 'Find Object'},
+    'mission_object_reroll': {'tr': 'Başka Nesne', 'en': 'Another Object'},
+    'mission_object_detected': {'tr': 'Algılanan:', 'en': 'Detected:'},
+    'object_mug': {'tr': 'Bardak / Kupa', 'en': 'Cup / Mug'},
+    'object_bottle': {'tr': 'Şişe', 'en': 'Bottle'},
+    'object_pillow': {'tr': 'Yastık', 'en': 'Pillow'},
+    'object_fruit': {'tr': 'Meyve', 'en': 'Fruit'},
+    'object_shoe': {'tr': 'Ayakkabı', 'en': 'Shoe'},
+    'object_laptop': {'tr': 'Dizüstü / Laptop', 'en': 'Laptop'},
+    'object_lighter': {'tr': 'Çakmak', 'en': 'Lighter'},
+    'object_paper': {'tr': 'Havlu / Peçete', 'en': 'Towel / Tissue'},
+    'object_clock': {'tr': 'Saat', 'en': 'Clock'},
+    'object_remote': {'tr': 'Kumanda', 'en': 'Remote'},
+    'object_backpack': {'tr': 'Sırt Çantası', 'en': 'Backpack'},
+    'object_keyboard': {'tr': 'Klavye', 'en': 'Keyboard'},
   };
 
   static const Map<int, Map<String, String>> _dayShortNames = {

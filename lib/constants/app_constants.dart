@@ -95,3 +95,85 @@ int accumulateColorHold(
 /// MIS-02: the color mission is complete once accumulated [heldMs] reaches
 /// [kColorHoldMs].
 bool colorComplete(int heldMs) => heldMs >= kColorHoldMs;
+
+/// MIS-03 [ASSUMED]: minimum confidence (0..1) for a label to count as a match.
+/// Lower than the default model (0.70) because the CUSTOM ImageNet classifier's
+/// softmax spreads probability across 1000 classes, so a correct top label often
+/// sits ~0.3-0.6. Device-calibrated under SC-4; pinned by object_match_test.dart.
+const double kObjectConfidence = 0.40;
+
+/// MIS-03 [ASSUMED]: how long (ms) a matching detection must be SUSTAINED to
+/// complete the object mission (~0.8-1s, NOT cumulative — a non-matching
+/// throttled tick RESETS to 0). Kept `>= 2 * kObjectThrottleMs` so at least two
+/// independent throttled detections are always required (noise robustness — a
+/// single false-positive label can never complete the mission). Device-calibrated
+/// under SC-4; pinned by object_match_test.dart.
+const int kObjectHoldMs = 1000;
+
+/// MIS-03 [ASSUMED]: minimum gap (ms) between ML Kit inferences (throttle).
+/// ~300-500ms avoids per-frame jank (CONTEXT decision; Pitfall 4). The sustained-
+/// hold cadence is measured between throttled ticks, so [kObjectHoldMs] is kept
+/// `>= 2 *` this value. Device-tuned under SC-4; pinned by object_match_test.dart.
+const int kObjectThrottleMs = 400;
+
+/// MIS-03: curated target key → accepted CUSTOM-MODEL (ImageNet) label strings.
+/// Keys are AppStrings lookup suffixes (`object_<key>`) + the Turkish object name;
+/// values are EXACT ImageNet class strings the bundled classifier emits (English;
+/// matching is case-insensitive — see [hasMatch]). The custom ImageNet model was
+/// adopted because the default ML Kit model is too coarse for kitchen items
+/// (fork→"Wheel", banana→"Insect/Bird" on the Redmi Note 9S). This is the FIRST
+/// CANDIDATE set, drawn from ImageNet-1000 classes that cover common HOUSEHOLD /
+/// KITCHEN items; DEVICE-VERIFIED + finalized under SC-4 — the live debug readout
+/// collects the real emitted label strings per target, then this table is pinned.
+/// DEVICE-VERIFIED set (Redmi Note 9S, ImageNet model): these everyday household
+/// items the model recognizes RELIABLY. Items that did NOT work on device are
+/// deliberately excluded: plate/bowl/cutlery (not ImageNet classes for table
+/// items), book (reads poorly), key (no ImageNet class). 'fruit' GENERALIZES
+/// across ImageNet fruit classes (user request). Drinkware collapses espresso/
+/// coffee-mug/cup/mug into one 'mug' target. Matching is case-insensitive.
+const Map<String, Set<String>> kObjectTargets = {
+  'mug': {'espresso', 'coffee mug', 'cup'}, // bardak/kupa
+  'bottle': {'water bottle', 'pop bottle', 'beer bottle', 'wine bottle'}, // şişe
+  'pillow': {'pillow'}, // yastık
+  'fruit': {
+    'banana', 'orange', 'lemon', 'pineapple', 'strawberry', 'fig',
+    'pomegranate', 'Granny Smith', // muz/elma/portakal... (meyve genel)
+  },
+  'shoe': {'running shoe', 'sandal', 'Loafer', 'clog'}, // ayakkabı
+  'laptop': {'laptop', 'notebook'}, // dizüstü
+  'lighter': {'lighter'}, // çakmak
+  'paper': {'paper towel', 'toilet tissue', 'bath towel'}, // havlu/peçete/rulo
+  'clock': {'analog clock', 'digital clock', 'wall clock'}, // saat
+  'remote': {'remote control'}, // kumanda
+  'backpack': {'backpack'}, // sırt çantası
+  'keyboard': {'computer keyboard'}, // klavye
+};
+
+/// MIS-03: CONCEPT AGGREGATION — sums the confidences of ALL returned labels that
+/// belong to [accepted] (case-insensitive) and matches iff the SUM is `>= floor`.
+/// Device finding: the ImageNet model is fine-grained, so one real object spreads
+/// probability across several specific classes (a cup → `cup` 0.40 + `coffee mug`
+/// 0.30 + `espresso` …), each individually below the floor but together clearly
+/// the target. Summing within a concept-coherent accepted set generalizes those
+/// specifics back into one target (a cup is a cup whether the top label is `cup`
+/// or `coffee mug`). Pure + ML-Kit-FREE (plain `(String, double)` records, NOT
+/// `ImageLabel`) — the calibratable/unit-testable seam. Do NOT import `google_mlkit_*`.
+bool hasMatch(List<(String label, double confidence)> labels,
+    Set<String> accepted, double floor) {
+  final lower = accepted.map((e) => e.toLowerCase()).toSet();
+  double sum = 0;
+  for (final l in labels) {
+    if (lower.contains(l.$1.toLowerCase())) sum += l.$2;
+  }
+  return sum >= floor;
+}
+
+/// MIS-03 / D-02 analog: pure sustained-hold accumulator (NOT cumulative). Adds
+/// [dtMs] to [heldMs] while [matched]; a single non-matching throttled tick
+/// RESETS to 0 (mirrors [accumulateHold] / [accumulateColorHold]).
+int accumulateObjectHold(int heldMs, bool matched, int dtMs) =>
+    matched ? heldMs + dtMs : 0;
+
+/// MIS-03: the object mission is complete once accumulated [heldMs] reaches
+/// [kObjectHoldMs].
+bool objectComplete(int heldMs) => heldMs >= kObjectHoldMs;
