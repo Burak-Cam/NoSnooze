@@ -24,6 +24,16 @@ dependencies:
   cupertino_icons: ^1.0.8
   audioplayers: ^6.0.0
   camera: ^0.12.0+1
+  # MIS-03 (Phase 6): on-device ML Kit image labeling — label + confidence per
+  # frame, bundled offline model (no Firebase, no network). Official
+  # flutter-ml/google_ml_kit_flutter monorepo (pub.dev). Used by
+  # lib/missions/object_mission.dart to recognize the requested household item.
+  google_mlkit_image_labeling: ^0.14.2
+  # Imported directly in lib/missions/object_mission.dart for InputImage /
+  # InputImageMetadata (the CameraImage→InputImage conversion). Resolved
+  # transitively via google_mlkit_image_labeling; declared directly so
+  # flutter_lints 5.x `depend_on_referenced_packages` passes (flutter_fgbg precedent).
+  google_mlkit_commons: ^0.11.0
 
 dev_dependencies:
   flutter_test:
