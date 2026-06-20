@@ -891,6 +891,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           AppStrings.get('mission_color_name', currentLang),
                         MissionType.nesne =>
                           AppStrings.get('mission_object_name', currentLang),
+                        MissionType.su =>
+                          AppStrings.get('mission_water_name', currentLang),
                         MissionType.none =>
                           AppStrings.get('mission_none', currentLang),
                       },
