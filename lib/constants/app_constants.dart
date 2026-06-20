@@ -184,7 +184,11 @@ bool objectComplete(int heldMs) => heldMs >= kObjectHoldMs;
 /// Device-calibrated under SC-4 — pulled ABOVE the alarm-only grouped baseline
 /// (the alarm ringing alone must NOT clear this floor — SC-4 false-positive
 /// guard). Pinned by water_match_test.dart.
-const double kWaterConfidence = 0.50;
+/// SC-4 device-calibrated (Redmi Note 9S, 2026-06-21): grouped sum of the 4
+/// water classes is ~2.0 on close running water vs 0.00 on the ducked-alarm
+/// baseline (zero bleed). 0.70 sits well above baseline and is reliably cleared
+/// by tap/sink/shower held near the mic; marginal/distant water is rejected.
+const double kWaterConfidence = 0.70;
 
 /// MIS-04 [ASSUMED]: how long (ms) running water must be SUSTAINED to complete
 /// the mission (NOT cumulative — a single non-matching throttled tick RESETS to
@@ -200,25 +204,26 @@ const int kWaterHoldMs = 2500;
 /// SC-4; pinned by water_match_test.dart.
 const int kWaterThrottleMs = 750;
 
-/// MIS-04 / D-01 [ASSUMED]: soft-loop volume (0..1) WHILE the su mission is open.
-/// ~0.18 instead of the default 0.5 — the alarm keeps ringing uninterrupted
-/// (ENG-01) but mic bleed drops so real water more easily dominates (SC-4 #1).
-/// Device-calibrated — the highest value that still eliminates the alarm-bleed
-/// false-positive. Pinned by water_match_test.dart.
-const double kWaterDuckVolume = 0.18;
+// NOTE (SC-4, 2026-06-21): the planned `kWaterDuckVolume` soft-loop-duck constant
+// was REMOVED. On-device the record mic's audio-focus grab silenced the soft loop
+// (audioplayers pauses on AUDIOFOCUS_LOSS), and even when forced to keep playing
+// it was inaudible while still bleeding into the mic. The su mission therefore
+// drops the soft-loop audio entirely and uses a looping VIBRATION as the wake
+// pressure (ring_screen._startMissionVibration) — there is no duck volume to tune.
 
 /// MIS-04 / D-05: the "running water" YAMNet class indices (resolved from
-/// yamnet_class_map.csv). PLACEHOLDER candidate set (Water, Water tap/faucet,
-/// Sink, Bathtub, Stream, Pour, Trickle/dribble, Gurgling, Fill) — the FINAL set
-/// is cut under SC-4 device calibration (keep classes strong on real water / weak
-/// on the alarm tone; drop alarm-confusable classes). Indices are model-version
-/// specific → resolved + device-verified in Plan 02. Intentionally empty here:
-/// the pure helpers + tests prove the grouped-sum logic without it.
+/// yamnet_class_map.csv, MediaPipe YAMNet [15600]->[1,521]).
+/// SC-4 device-calibrated (Redmi Note 9S, 2026-06-21): across bathroom-sink,
+/// shower, and kitchen taps these 4 classes carry essentially all the signal
+/// (Sink + Water-tap-faucet dominate at 0.4-0.85; Water + Bathtub add tail),
+/// while the ducked-alarm baseline fires NONE of them (grouped 0.00). Hiss /
+/// Steam / Snake (shower spray) were deliberately EXCLUDED — they also fire on
+/// non-water sounds and would erode the false-positive guard.
 const Set<int> kWaterClassIndices = {
-  // PLACEHOLDER — filled from yamnet_class_map.csv display_name mapping in Plan 02:
-  // 'Water', 'Water tap, faucet', 'Sink (filling or washing)',
-  // 'Bathtub (filling or washing)', 'Stream', 'Pour', 'Trickle, dribble',
-  // 'Gurgling', 'Fill (with liquid)'
+  282, // Water
+  364, // Water tap, faucet
+  365, // Sink (filling or washing)
+  366, // Bathtub (filling or washing)
 };
 
 /// MIS-04 / D-05: CONCEPT AGGREGATION — sums ONLY the scores at the indices in
@@ -241,11 +246,17 @@ double waterGroupedScore(List<double> scores, Set<int> idx) {
 bool hasWaterMatch(List<double> scores, Set<int> idx, double floor) =>
     waterGroupedScore(scores, idx) >= floor;
 
-/// MIS-04 / D-09: pure sustained-hold accumulator (NOT cumulative). Adds [dtMs]
-/// to [heldMs] while [matched]; a single non-matching throttled tick RESETS to 0
-/// (mirrors [accumulateObjectHold]).
-int accumulateWaterHold(int heldMs, bool matched, int dtMs) =>
-    matched ? heldMs + dtMs : 0;
+/// MIS-04 / D-09: pure sustained-hold accumulator with LEAKY decay. Adds [dtMs]
+/// to [heldMs] while [matched]; on a miss it DECAYS by half a tick (`dtMs ~/ 2`)
+/// clamped at 0 — NOT a hard reset. SC-4 device finding (2026-06-21): YAMNet
+/// intermittently misreads real running water as Toothbrush/Insect/Cricket for a
+/// tick or two, and the old hard reset wiped near-complete progress (observed
+/// twice at 2402/2500 ms). Half-rate decay lets a brief misclassification cost
+/// only one tick while sustained non-water still drains to 0 (real, mostly-
+/// continuous water nets positive and completes).
+int accumulateWaterHold(int heldMs, bool matched, int dtMs) => matched
+    ? heldMs + dtMs
+    : (heldMs - (dtMs ~/ 2)).clamp(0, kWaterHoldMs);
 
 /// MIS-04: the water mission is complete once accumulated [heldMs] reaches
 /// [kWaterHoldMs].

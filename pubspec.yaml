@@ -50,6 +50,7 @@ dependencies:
   # 7.x line was not cleared for this device/flow at plan-time, so we keep the 6.x
   # API surface (startStream + RecordConfig). Used by water_mission.dart.
   record: ^6.1.1
+  vibration: ^3.2.0
 
 dev_dependencies:
   flutter_test:
