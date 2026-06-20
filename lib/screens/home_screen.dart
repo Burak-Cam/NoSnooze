@@ -936,6 +936,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                   Navigator.pop(context);
                                 },
                               ),
+                              // MIS-03: the Nesne Bulma (Find Object) mission row.
+                              ListTile(
+                                leading: const Icon(Icons.category),
+                                title: Text(AppStrings.get('mission_object_name', currentLang)),
+                                onTap: () {
+                                  setModalState(() => tempMissionType = MissionType.nesne);
+                                  Navigator.pop(context);
+                                },
+                              ),
                             ],
                           );
                         }

@@ -10,6 +10,7 @@ import '../l10n/app_strings.dart';
 import '../missions/color_mission.dart';
 import '../missions/lumen_mission.dart';
 import '../missions/mission.dart';
+import '../missions/object_mission.dart';
 import '../models/alarm_entity.dart';
 import '../models/enums.dart';
 import '../services/prefs_service.dart';
@@ -364,11 +365,14 @@ class _RingScreenState extends State<RingScreen> {
     if (!mounted) return;
 
     setState(() {
-      // MIS-02: select the concrete Mission by the alarm's type. renk → the
-      // new ColorMission; lumen (and any future/default value) → LumenMission.
-      // none never reaches here (handled by the != none guard upstream).
+      // MIS-02 / MIS-03: select the concrete Mission by the alarm's type. renk →
+      // ColorMission; nesne → the new ObjectMission; lumen (and any future/default
+      // value) → LumenMission. none never reaches here (handled by the != none
+      // guard upstream). Success path is identical across missions (same onSuccess
+      // → _onMissionSuccess; no new RingResult).
       _mission = switch (widget.missionType) {
         MissionType.renk => ColorMission(language: widget.language),
+        MissionType.nesne => ObjectMission(language: widget.language),
         _ => LumenMission(language: widget.language),
       };
       _missionActive = true;
