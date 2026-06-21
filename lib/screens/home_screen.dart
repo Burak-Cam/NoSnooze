@@ -48,9 +48,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<String> savedBarcodes = [];
   
   final List<String> defaultRingtones = [
-    'alarm1.mp3', 'alarm2.mp3', 'alarm3.mp3', 'alarm4.mp3', 
-    'alarm5.mp3', 'alarm6.mp3', 'alarm7.mp3', 'alarm8.mp3', 
-    'alarm9.mp3'
+    'alarm1.mp3', 'alarm2.mp3', 'alarm3.mp3', 'alarm4.mp3',
+    'alarm5.mp3', 'alarm6.mp3', 'alarm7.mp3', 'alarm8.mp3',
+    'alarm9.mp3', 'alarm10.mp3'
   ];
   
   List<String> get dayNames => currentLang == 'tr' 

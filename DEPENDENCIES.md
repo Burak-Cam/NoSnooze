@@ -66,9 +66,30 @@ All run fully on-device; no network, no Firebase. See `NOTICE` for attributions.
 
 ## Audio assets (bundled in `assets/sounds/`)
 
-| Asset | License | Status |
-|-------|---------|--------|
-| `alarm1.mp3` … `alarm9.mp3` | **UNKNOWN — must verify before Play Store release** | ⚠️ Provenance unconfirmed. If not original/royalty-free, replace with CC0/royalty-free alarm tones before a commercial release (potential copyright risk on a paid app). |
+10 built-in ringtones, listed by `defaultRingtones` in `home_screen.dart` and
+played via `AssetSource`. The picker shows them as "Alarm 1" … "Alarm 10".
+
+`alarm3`–`alarm10` were sourced from **Pixabay** (royalty-free, commercial use
+allowed, no attribution required; used bundled-in-app, not standalone). The
+original Pixabay filenames are kept here as provenance — the trailing number is
+the Pixabay sound ID.
+
+| Asset | Source | License | Original filename (Pixabay ID) |
+|-------|--------|---------|--------------------------------|
+| `alarm1.mp3` | unknown (kept by owner) | ⚠️ **UNVERIFIED** | — (WAV, 25s, no metadata) |
+| `alarm2.mp3` | unknown (kept by owner) | ⚠️ **UNVERIFIED** | — (no metadata) |
+| `alarm3.mp3` | Pixabay | royalty-free | `8footdino_on_scratch-alarm-301729` |
+| `alarm4.mp3` | Pixabay | royalty-free | `audley_fergine-adventure-stealth-loop-1-327730` |
+| `alarm5.mp3` | Pixabay | royalty-free | `emir3427-alarm-478339` |
+| `alarm6.mp3` | Pixabay | royalty-free | `jeremayjimenez-minas-gerais-brazil-eas-alarm-456936` |
+| `alarm7.mp3` | Pixabay | royalty-free | `microsammy-clock-alarm-8761` |
+| `alarm8.mp3` | Pixabay | royalty-free | `ncone-calm-melody-lloop-197039` |
+| `alarm9.mp3` | Pixabay | royalty-free | `soynoviembre-calm-guitar-alarm-532660` |
+| `alarm10.mp3` | Pixabay | royalty-free | `u_inx5oo5fv3-alarm-327234` |
+
+> ⚠️ **`alarm1.mp3` / `alarm2.mp3` provenance is still UNVERIFIED** (owner chose to
+> keep them; no embedded source metadata). These are the remaining licensing risk
+> for a paid release — confirm they are original/royalty-free or replace them too.
 
 ## Maintenance & security checklist
 
