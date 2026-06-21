@@ -19,7 +19,8 @@ const double kLumenThreshold = 140;
 
 /// MIS-01 / D-02: how long (ms) average luminance must be SUSTAINED at/above
 /// [kLumenThreshold] to complete the Lümen mission (~2-3s sustained, NOT
-/// cumulative — any drop resets). [ASSUMED] starting value, device-calibrated
+/// cumulative — a drop DECAYS the bar by half a tick rather than hard-resetting,
+/// see [accumulateHold]). [ASSUMED] starting value, device-calibrated
 /// in Plan 03. Pinned by lumen_hold_test.dart.
 const int kLumenHoldMs = 2500;
 
@@ -62,8 +63,9 @@ const double kColorMinSat = 0.46;
 const double kColorMinVal = 0.15;
 
 /// MIS-02 [ASSUMED]: how long (ms) a matching frame must be SUSTAINED to
-/// complete the color mission (~1s, NOT cumulative — any non-matching frame
-/// resets). Device-calibrated under SC-4; pinned by color_match_test.dart.
+/// complete the color mission (~1s, NOT cumulative — a non-matching frame
+/// DECAYS the bar by half a tick rather than hard-resetting, see
+/// [accumulateColorHold]). Device-calibrated under SC-4; pinned by color_match_test.dart.
 const int kColorHoldMs = 1000;
 
 /// MIS-02: the 6 target hues (degrees) — red 0, orange 30, yellow 60, green
@@ -112,7 +114,8 @@ const double kObjectConfidence = 0.40;
 
 /// MIS-03 [ASSUMED]: how long (ms) a matching detection must be SUSTAINED to
 /// complete the object mission (~0.8-1s, NOT cumulative — a non-matching
-/// throttled tick RESETS to 0). Kept `>= 2 * kObjectThrottleMs` so at least two
+/// throttled tick DECAYS the bar by half a tick rather than hard-resetting, see
+/// [accumulateObjectHold]). Kept `>= 2 * kObjectThrottleMs` so at least two
 /// independent throttled detections are always required (noise robustness — a
 /// single false-positive label can never complete the mission). Device-calibrated
 /// under SC-4; pinned by object_match_test.dart.
@@ -202,8 +205,9 @@ bool objectComplete(int heldMs) => heldMs >= kObjectHoldMs;
 const double kWaterConfidence = 0.70;
 
 /// MIS-04 [ASSUMED]: how long (ms) running water must be SUSTAINED to complete
-/// the mission (NOT cumulative — a single non-matching throttled tick RESETS to
-/// 0, see [accumulateWaterHold]). Kept `>= 2 * kWaterThrottleMs` so at least two
+/// the mission (NOT cumulative — a single non-matching throttled tick DECAYS the
+/// bar by half a tick rather than hard-resetting, see [accumulateWaterHold]).
+/// Kept `>= 2 * kWaterThrottleMs` so at least two
 /// independent throttled detections are always required — a single false-positive
 /// tick (alarm blip) can NEVER complete the mission (D-03/D-09). Device-calibrated
 /// under SC-4; pinned by water_match_test.dart.
