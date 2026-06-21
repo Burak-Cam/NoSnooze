@@ -64,3 +64,11 @@ bool streakAlive(String? lastScanDate, String today) {
   if (last == null || now == null) return false;
   return now.difference(last).inDays <= 2;
 }
+
+/// STREAK-SAVE: snooze-token cost to rescue a broken streak (spend tokens
+/// instead of letting it reset to 0). Only offered on an inactivity break, never
+/// after a cheat reset (a cheat already wipes tokens to 0).
+const int kStreakSaveCost = 2;
+
+/// True if the user has enough snooze tokens to rescue a broken streak.
+bool canSaveStreak(int tokens) => tokens >= kStreakSaveCost;

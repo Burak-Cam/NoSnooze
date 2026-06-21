@@ -91,8 +91,78 @@ class _HomeScreenState extends State<HomeScreen> {
     await _checkPermissions();
     _startAlarmListener();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _offerStreakSaveIfBroken();
+      if (!mounted) return;
       _checkBatteryOptimization();
     });
+  }
+
+  // STREAK-SAVE: on cold start, if the streak broke from inactivity (2+ missed
+  // days → streakAlive false) offer to rescue it for kStreakSaveCost tokens
+  // instead of silently resetting. Runs AFTER _checkCheatStatus, so a cheat
+  // reset (streak already 0) short-circuits here — saving never applies to
+  // cheating (which also wipes tokens). Keep => spend tokens + revive the streak
+  // (lastScanDate set to yesterday so it's alive and today's wake still counts).
+  // Decline / not enough tokens => reset to 0 (the old decay behaviour).
+  Future<void> _offerStreakSaveIfBroken() async {
+    final prefs = PrefsService(await SharedPreferences.getInstance());
+    final today = DateTime.now().toString().split(' ')[0];
+    final oldStreak = prefs.userStreak;
+    if (oldStreak <= 0 || streakAlive(prefs.lastScanDate, today)) return;
+
+    final tokens = prefs.snoozeTokens;
+    final canSave = canSaveStreak(tokens);
+    if (!mounted) return;
+
+    final keep = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppStrings.get('streak_break_title', currentLang)),
+        content: Text(
+          AppStrings.get(canSave ? 'streak_break_msg' : 'streak_break_no_tokens', currentLang)
+              .replaceAll('{n}', '$oldStreak')
+              .replaceAll('{c}', '$kStreakSaveCost'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(AppStrings.get('streak_break_decline', currentLang)),
+          ),
+          ElevatedButton.icon(
+            onPressed: canSave ? () => Navigator.pop(ctx, true) : null,
+            icon: Icon(Icons.timelapse,
+                color: canSave ? Colors.cyanAccent : Colors.grey, size: 18),
+            label: Text(
+                '${AppStrings.get('streak_break_save', currentLang)} ($kStreakSaveCost)'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+
+    if (keep == true && canSave) {
+      final newTokens = tokens - kStreakSaveCost;
+      // Revive: set lastScan to yesterday so the streak is alive (gap 1) and a
+      // real wake today still increments it.
+      final yesterday = DateTime.now()
+          .subtract(const Duration(days: 1))
+          .toString()
+          .split(' ')[0];
+      await prefs.setSnoozeTokens(newTokens);
+      await prefs.setLastScanDate(yesterday);
+      if (!mounted) return;
+      setState(() {
+        snoozeTokens = newTokens;
+        streakCount = oldStreak;
+      });
+      _showSnack(AppStrings.get('streak_saved', currentLang)
+          .replaceAll('{c}', '$kStreakSaveCost'));
+    } else {
+      await prefs.setUserStreak(0);
+      if (!mounted) return;
+      setState(() => streakCount = 0);
+    }
   }
 
   @override
@@ -460,26 +530,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadPreferences() async {
     final prefs = PrefsService(await SharedPreferences.getInstance());
     if (!mounted) return;
-    // STREAK-GRACE: a real streak decays on inactivity. If 2+ days have been
-    // missed since the last counted wake (streakAlive false), the streak is
-    // dead — reset it to 0 here so the home screen shows the honest value before
-    // the next wake. Snooze tokens are KEPT on a natural lapse; only a genuine
-    // cheat (decideCheat reset) wipes tokens.
-    int loadedStreak = prefs.userStreak;
-    if (loadedStreak > 0 &&
-        !streakAlive(
-            prefs.lastScanDate, DateTime.now().toString().split(' ')[0])) {
-      loadedStreak = 0;
-      await prefs.setUserStreak(0);
-      if (!mounted) return;
-    }
     // FIX-03 / D-05: per-entry resilient parse — a single corrupt record skips
     // only itself instead of wiping the whole list (no app crash on load).
+    // STREAK-GRACE/SAVE: the streak loads at its stored value here; a broken
+    // streak (2+ missed days) is resolved on cold start by
+    // _offerStreakSaveIfBroken (keep for 2 tokens, else reset) — NOT silently
+    // zeroed at load.
     final String? alarmsJson = prefs.alarmsData;
     final (parsedAlarms, skipped) = parseAlarmsResilient(alarmsJson);
     setState(() {
       savedBarcodes = prefs.targetBarcodes;
-      streakCount = loadedStreak;
+      streakCount = prefs.userStreak;
       snoozeTokens = prefs.snoozeTokens;
       alarms = parsedAlarms;
     });
