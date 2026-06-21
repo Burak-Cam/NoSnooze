@@ -45,6 +45,18 @@ class AppStrings {
     'token_desc': {'tr': 'Her 3 günlük seride 1 jeton kazanırsın. En fazla 3 jeton birikebilir.', 'en': 'Earn 1 token every 3-day streak. Max 3 tokens allowed.'},
     'streak_day': {'tr': '. Gün', 'en': '. Day'},
     'token_name': {'tr': 'Jeton', 'en': 'Token'},
+    'streak_break_title': {'tr': '🔥 Serin Tehlikede!', 'en': '🔥 Your Streak Is At Risk!'},
+    'streak_break_msg': {
+      'tr': '{n} günlük serin kırılmak üzere. {c} erteleme jetonu harcayıp koruyabilirsin.',
+      'en': 'Your {n}-day streak is about to break. Spend {c} snooze tokens to keep it.'
+    },
+    'streak_break_no_tokens': {
+      'tr': '{n} günlük serin kırıldı. Korumak için {c} jeton gerekiyordu — yeterli jetonun yok.',
+      'en': 'Your {n}-day streak broke. Saving it needs {c} tokens — you don\'t have enough.'
+    },
+    'streak_break_save': {'tr': 'Koru', 'en': 'Keep'},
+    'streak_break_decline': {'tr': 'Bıraksın', 'en': 'Let it go'},
+    'streak_saved': {'tr': '🔥 Serin korundu! {c} jeton harcandı.', 'en': '🔥 Streak saved! {c} tokens spent.'},
     'ringtone_menu': {'tr': 'Zil Sesi', 'en': 'Ringtone'},
     'language_menu': {'tr': 'Dil / Language', 'en': 'Language'},
     'dark_mode_menu': {'tr': 'Karanlık Mod', 'en': 'Dark Mode'},

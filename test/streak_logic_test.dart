@@ -93,4 +93,21 @@ void main() {
       expect(nextStreak(4, '2026-06-14', '2026-06-17'), 1);
     });
   });
+
+  // STREAK-SAVE: spend kStreakSaveCost (2) tokens to rescue a broken streak.
+  group('canSaveStreak', () {
+    test('enough tokens (>= cost) => true', () {
+      expect(canSaveStreak(kStreakSaveCost), isTrue);
+      expect(canSaveStreak(3), isTrue);
+    });
+
+    test('not enough tokens (< cost) => false', () {
+      expect(canSaveStreak(kStreakSaveCost - 1), isFalse);
+      expect(canSaveStreak(0), isFalse);
+    });
+
+    test('cost is 2', () {
+      expect(kStreakSaveCost, 2);
+    });
+  });
 }
