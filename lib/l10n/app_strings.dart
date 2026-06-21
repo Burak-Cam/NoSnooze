@@ -83,7 +83,7 @@ class AppStrings {
     'btn_cancel': {'tr': 'İptal', 'en': 'Cancel'},
     'btn_save': {'tr': 'Kaydet', 'en': 'Save'},
     'inactive': {'tr': 'Pasif', 'en': 'Inactive'},
-    'app_version': {'tr': 'v1.0.0 (Beta)', 'en': 'v1.0.0 (Beta)'},
+    'app_version': {'tr': 'v2.0.1 (Beta)', 'en': 'v2.0.1 (Beta)'},
     // RLS-04 / D-03: exact-alarm permission redirect dialog (TR/EN parity).
     'exact_alarm_title': {'tr': '⏰ İzin Gerekli', 'en': '⏰ Permission Required'},
     'exact_alarm_desc': {
