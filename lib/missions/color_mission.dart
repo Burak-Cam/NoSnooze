@@ -98,7 +98,8 @@ class _ColorViewState extends State<_ColorView>
   late Animation<double> _slotAnim;
   int _targetIndex = 0;
   // The last few landed indices — a reroll avoids repeating them so the user
-  // does not get the same color 2-3 spins in a row (device feedback).
+  // does not get the same color a few spins in a row (device feedback). History
+  // is 3-deep; with 6 hues there are always ≥3 fresh candidates.
   final List<int> _recentTargets = [];
   // True while the slot strip is scrolling. The slot is shown as a full-screen
   // overlay ONLY while spinning; once it lands we reveal the camera preview +
@@ -150,8 +151,8 @@ class _ColorViewState extends State<_ColorView>
   // Resets _heldMs so a reroll mid-hold carries NO progress penalty (unlimited,
   // no-penalty reroll — MIS-02). A mid-spin tap restarts cleanly.
   void _spin() {
-    // Pick a target that is NOT one of the last 2 landed colors (avoids 2-3
-    // repeats in a row). With 6 hues and a 2-deep history there are always ≥4
+    // Pick a target that is NOT one of the last 3 landed colors (avoids repeats
+    // in a row). With 6 hues and a 3-deep history there are always ≥3
     // candidates; the length guard is belt-and-suspenders against a loop.
     int newIndex;
     do {
@@ -159,7 +160,7 @@ class _ColorViewState extends State<_ColorView>
     } while (_recentTargets.contains(newIndex) &&
         _recentTargets.length < kColorPaletteHues.length);
     _recentTargets.add(newIndex);
-    if (_recentTargets.length > 2) _recentTargets.removeAt(0);
+    if (_recentTargets.length > 3) _recentTargets.removeAt(0);
     // Land so the target swatch sits in the center window after _cycles full
     // palette scrolls (deterministic via Tween + Curves.decelerate).
     final end =

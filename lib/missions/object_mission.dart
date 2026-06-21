@@ -135,7 +135,9 @@ class _ObjectViewState extends State<_ObjectView> with WidgetsBindingObserver {
   // by _spin() on open + on every reroll.
   late String _targetKey;
   // The last few picked keys — a reroll avoids repeating them so the user does
-  // not get the same target 2-3 spins in a row (color_mission _recentTargets).
+  // not get the same target a few spins in a row (color_mission _recentTargets).
+  // History is 3-deep; with 12 targets there are always plenty of fresh
+  // candidates.
   final List<String> _recentTargets = [];
 
   @override
@@ -203,8 +205,8 @@ class _ObjectViewState extends State<_ObjectView> with WidgetsBindingObserver {
     }
   }
 
-  // MIS-03: pick a new random target, avoiding the last 2 picked keys (so the
-  // user does not get the same object 2-3 rerolls in a row). Resets _heldMs so a
+  // MIS-03: pick a new random target, avoiding the last 3 picked keys (so the
+  // user does not get the same object a few rerolls in a row). Resets _heldMs so a
   // reroll mid-hold carries NO progress penalty (unlimited, no-penalty reroll).
   void _spin() {
     final keys = kObjectTargets.keys.toList();
@@ -214,7 +216,7 @@ class _ObjectViewState extends State<_ObjectView> with WidgetsBindingObserver {
     } while (_recentTargets.contains(newKey) &&
         _recentTargets.length < keys.length);
     _recentTargets.add(newKey);
-    if (_recentTargets.length > 2) _recentTargets.removeAt(0);
+    if (_recentTargets.length > 3) _recentTargets.removeAt(0);
     if (mounted) {
       setState(() {
         _targetKey = newKey;
