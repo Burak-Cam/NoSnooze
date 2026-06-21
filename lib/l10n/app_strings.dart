@@ -65,6 +65,7 @@ class AppStrings {
     'onboard_token_desc': {'tr': 'Biriken jetonlarla erteleyebilir ya da serini kurtarabilirsin.', 'en': 'Spend tokens to snooze or rescue your streak.'},
     'onboard_add_title': {'tr': 'Alarm Ekle', 'en': 'Add Alarm'},
     'onboard_add_desc': {'tr': 'Saat, tekrar, zil ve uyandırma görevini buradan seç.', 'en': 'Pick time, repeat, ringtone and a wake-up task here.'},
+    'onboard_skip': {'tr': 'Turu geç', 'en': 'Skip tour'},
     'ringtone_menu': {'tr': 'Zil Sesi', 'en': 'Ringtone'},
     'language_menu': {'tr': 'Dil / Language', 'en': 'Language'},
     'dark_mode_menu': {'tr': 'Karanlık Mod', 'en': 'Dark Mode'},
