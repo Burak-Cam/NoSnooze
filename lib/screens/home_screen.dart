@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_fgbg/flutter_fgbg.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:showcaseview/showcaseview.dart';
 
 import '../constants/app_constants.dart';
 import '../l10n/app_strings.dart';
@@ -70,9 +71,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  // Onboarding coach-mark targets (showcaseview). Highlighted once on first
+  // launch in the barcode -> streak -> token -> add-alarm order.
+  final GlobalKey _obBarcode = GlobalKey();
+  final GlobalKey _obStreak = GlobalKey();
+  final GlobalKey _obToken = GlobalKey();
+  final GlobalKey _obAddAlarm = GlobalKey();
+
   @override
   void initState() {
     super.initState();
+    // Register the showcase service so the first-launch tour (kicked off in
+    // _initializeRest) can highlight the home widgets via their GlobalKeys.
+    ShowcaseView.register();
     _bootstrap();
   }
 
@@ -91,6 +102,17 @@ class _HomeScreenState extends State<HomeScreen> {
     await _checkPermissions();
     _startAlarmListener();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final prefs = PrefsService(await SharedPreferences.getInstance());
+      if (!mounted) return;
+      // First launch: run the onboarding tour and skip the other prompts this
+      // launch (the battery dialog shows on the next launch, no overlap).
+      if (!prefs.onboardingSeen) {
+        await prefs.setOnboardingSeen(true);
+        if (!mounted) return;
+        ShowcaseView.get().startShowCase(
+            [_obBarcode, _obStreak, _obToken, _obAddAlarm]);
+        return;
+      }
       await _offerStreakSaveIfBroken();
       if (!mounted) return;
       _checkBatteryOptimization();
@@ -169,6 +191,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     alarmSubscription?.cancel();
     _fgbgSubscription?.cancel();
+    try {
+      ShowcaseView.get().unregister();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -1182,7 +1207,11 @@ class _HomeScreenState extends State<HomeScreen> {
           onPressed: () => _scaffoldKey.currentState?.openDrawer(), 
         ),
         actions: [
-          GestureDetector(
+          Showcase(
+            key: _obStreak,
+            title: AppStrings.get('onboard_streak_title', currentLang),
+            description: AppStrings.get('onboard_streak_desc', currentLang),
+            child: GestureDetector(
             onTap: () => _showStatInfo('streak'),
             child: Container(
               margin: const EdgeInsets.only(left: 10),
@@ -1200,9 +1229,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-          ),
+          )),
 
-          GestureDetector(
+          Showcase(
+            key: _obToken,
+            title: AppStrings.get('onboard_token_title', currentLang),
+            description: AppStrings.get('onboard_token_desc', currentLang),
+            child: GestureDetector(
             onTap: () => _showStatInfo('token'),
             child: Container(
               margin: const EdgeInsets.only(right: 15, left: 8),
@@ -1220,7 +1253,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-          ),
+          )),
         ],
       ),
       drawer: Drawer(
@@ -1289,9 +1322,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addAlarm,
-        child: const Icon(Icons.add, size: 30),
+      floatingActionButton: Showcase(
+        key: _obAddAlarm,
+        title: AppStrings.get('onboard_add_title', currentLang),
+        description: AppStrings.get('onboard_add_desc', currentLang),
+        child: FloatingActionButton(
+          onPressed: _addAlarm,
+          child: const Icon(Icons.add, size: 30),
+        ),
       ),
       body: Column(
         children: [
@@ -1299,16 +1337,20 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                Row(
+                Showcase(
+                  key: _obBarcode,
+                  title: AppStrings.get('onboard_barcode_title', currentLang),
+                  description: AppStrings.get('onboard_barcode_desc', currentLang),
+                  child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text("${AppStrings.get('saved_items', currentLang)} (${savedBarcodes.length}/3)", 
+                    Text("${AppStrings.get('saved_items', currentLang)} (${savedBarcodes.length}/3)",
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.black87)
                     ),
                     if (savedBarcodes.length < kMaxBarcodes)
                       IconButton(onPressed: _scanAndAddBarcode, icon: Icon(Icons.qr_code_scanner, color: isDark ? Colors.white : Colors.black, size: 24))
                   ],
-                ),
+                )),
                 if (savedBarcodes.isEmpty)
                    Padding(
                      padding: const EdgeInsets.all(8.0),
