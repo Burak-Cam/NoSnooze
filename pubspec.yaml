@@ -81,3 +81,11 @@ flutter:
   assets:
     - assets/sounds/  # <-- Bu satır klasördeki her şeyi içeri alır
     - assets/ml/  # MIS-03 (Phase 6): bundled on-device TFLite object-labeling model
+    - design/export/feature-1024x500.png  # BRAND-IN-APP: drawer header banner
+    - design/export/icon-1024.png  # BRAND-IN-APP: splash + brand logo source
+  fonts:
+    # BRAND-IN-APP: genuine Montserrat (weight 700) for the ScanAwake wordmark.
+    - family: Montserrat
+      fonts:
+        - asset: assets/fonts/Montserrat-Bold.ttf
+          weight: 700
